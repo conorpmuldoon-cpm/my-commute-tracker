@@ -1,1 +1,21 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Signing in…</title><script src="https://js.arcgis.com/4.30/"></script><script>require(["esri/identity/IdentityManager"], function (esriId) { esriId.setOAuthResponseHash(window.location.hash); window.close(); });</script></head><body>Completing ArcGIS sign-in…</body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Completing ArcGIS sign-in…</title>
+  <script src="https://js.arcgis.com/4.30/"></script>
+  <script>
+    require(["esri/identity/IdentityManager"], function (esriId) {
+      esriId.setOAuthResponseHash(window.location.hash);
+
+      // Give the OAuth response time to reach the parent app before closing.
+      window.setTimeout(function () {
+        window.close();
+      }, 1000);
+    });
+  </script>
+</head>
+<body>
+  Completing ArcGIS sign-in…
+</body>
+</html>
