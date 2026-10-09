@@ -8,10 +8,10 @@
     require(["esri/identity/IdentityManager"], function (esriId) {
       esriId.setOAuthResponseHash(window.location.hash);
 
-      // Give the OAuth response time to reach the parent app before closing.
+      // Redirect back to the PWA rather than depending on a popup window.
       window.setTimeout(function () {
-        window.close();
-      }, 1000);
+        window.location.replace("./");
+      }, 250);
     });
   </script>
 </head>
