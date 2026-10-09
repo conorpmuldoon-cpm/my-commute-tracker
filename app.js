@@ -19,7 +19,7 @@ const commuteLayer = new FeatureLayer({ url: appConfig.featureLayerUrl, outField
 const oauth = new OAuthInfo({
   appId: appConfig.clientId,
   portalUrl: appConfig.portalUrl,
-  popup: true,
+  popup: false,
   popupCallbackUrl: appConfig.redirectUrl
 });
 esriId.registerOAuthInfos([oauth]);
@@ -112,7 +112,25 @@ async function endCommute() {
   }
 }
 function reset() { trip = null; routeLayer.removeAll(); startButton.disabled = !signedIn; endButton.disabled = true; $("direction").disabled = false; $("estimate").disabled = false; $("elapsed").textContent = "0 min"; $("distance").textContent = "0.0 mi"; $("samples").textContent = "0"; }
+async function restoreSignedInSession() {
+  try {
+    const credential = await esriId.checkSignInStatus(
+      `${appConfig.portalUrl}/sharing`
+    );
 
+    if (!credential) return;
+
+    await commuteLayer.load();
+    signedIn = true;
+    $("account-status").textContent = "Signed in to ArcGIS";
+    startButton.disabled = false;
+    setStatus("Ready to start a commute.");
+  } catch {
+    // No saved ArcGIS session yet; the user can select Sign in to ArcGIS.
+  }
+}
+
+restoreSignedInSession();
 $("sign-in").addEventListener("click", signIn);
 startButton.addEventListener("click", startCommute);
 endButton.addEventListener("click", endCommute);
