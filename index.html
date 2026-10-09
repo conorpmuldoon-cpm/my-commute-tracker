@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b3a53" />
+  <title>My Commute Tracker</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="https://js.arcgis.com/4.30/esri/themes/light/main.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header><strong>My Commute Tracker</strong><span id="account-status">Not signed in</span></header>
+  <main>
+    <section id="controls" class="card">
+      <label>Direction
+        <select id="direction"><option value="Morning">Morning: Home → Work</option><option value="Evening">Evening: Work → Home</option></select>
+      </label>
+      <label>Google Maps estimate (minutes)
+        <input id="estimate" type="number" min="1" step="1" inputmode="numeric" placeholder="e.g., 32" />
+      </label>
+      <button id="sign-in">Sign in to ArcGIS</button>
+      <button id="start" disabled>Start commute</button>
+      <button id="end" class="danger" disabled>End commute</button>
+      <p id="status" role="status">Sign in before starting a commute.</p>
+    </section>
+    <section class="card metrics"><div><span>Elapsed</span><strong id="elapsed">0 min</strong></div><div><span>Distance</span><strong id="distance">0.0 mi</strong></div><div><span>Samples</span><strong id="samples">0</strong></div></section>
+    <div id="viewDiv" aria-label="Commute map"></div>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
