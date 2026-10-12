@@ -7,8 +7,6 @@
   <script>
     require(["esri/identity/IdentityManager"], function (esriId) {
       esriId.setOAuthResponseHash(window.location.hash);
-
-      // Redirect back to the PWA rather than depending on a popup window.
       window.setTimeout(function () {
         window.location.replace("./");
       }, 250);
