@@ -5,6 +5,10 @@ import GraphicsLayer from "https://js.arcgis.com/4.30/@arcgis/core/layers/Graphi
 import Graphic from "https://js.arcgis.com/4.30/@arcgis/core/Graphic.js";
 import Point from "https://js.arcgis.com/4.30/@arcgis/core/geometry/Point.js";
 import Polyline from "https://js.arcgis.com/4.30/@arcgis/core/geometry/Polyline.js";
+import Portal from "https://js.arcgis.com/4.30/@arcgis/core/portal/Portal.js";
+import RouteTask from "https://js.arcgis.com/4.30/@arcgis/core/rest/route/RouteTask.js";
+import RouteParameters from "https://js.arcgis.com/4.30/@arcgis/core/rest/route/RouteParameters.js";
+import FeatureSet from "https://js.arcgis.com/4.30/@arcgis/core/rest/support/FeatureSet.js";
 import OAuthInfo from "https://js.arcgis.com/4.30/@arcgis/core/identity/OAuthInfo.js";
 import esriId from "https://js.arcgis.com/4.30/@arcgis/core/identity/IdentityManager.js";
 import { appConfig } from "./app-config.js";
@@ -18,6 +22,8 @@ const map = new Map({ basemap: "streets-vector", layers: [routeLayer] });
 const view = new MapView({ container: "viewDiv", map, center: [-75.28, 40.0], zoom: 10 });
 const commuteLayer = new FeatureLayer({ url: appConfig.featureLayerUrl, outFields: ["*"] });
 const sampleLayer = new FeatureLayer({ url: appConfig.sampleLayerUrl, outFields: ["*"] });
+const speedSegmentsLayer = new FeatureLayer({ url: appConfig.speedSegmentsLayerUrl, outFields: ["*"] });
+let routeTaskPromise = null;
 
 const oauth = new OAuthInfo({
   appId: appConfig.clientId,
@@ -94,7 +100,88 @@ function locationError(error) {
 }
 
 async function loadPrivateLayers() {
-  await Promise.all([commuteLayer.load(), sampleLayer.load()]);
+  await Promise.all([commuteLayer.load(), sampleLayer.load(), speedSegmentsLayer.load()]);
+}
+
+async function getRouteTask() {
+  if (!routeTaskPromise) {
+    routeTaskPromise = (async () => {
+      const portal = new Portal({ url: appConfig.portalUrl });
+      await portal.load();
+      const routeUrl = portal.helperServices?.route?.url;
+      if (!routeUrl) throw new Error("No ArcGIS routing service is configured for this portal.");
+      await esriId.getCredential(routeUrl);
+      return new RouteTask({ url: routeUrl });
+    })();
+  }
+  return routeTaskPromise;
+}
+
+function lineDistanceMiles(geometry) {
+  return (geometry.paths || []).reduce((total, path) => total + miles(path), 0);
+}
+
+async function buildRoadSegments(localDate) {
+  if (trip.segmentFeatures) return trip.segmentFeatures;
+  let task = null;
+  try {
+    task = await getRouteTask();
+  } catch {
+    // The segments will still be preserved as direct GPS lines if routing is unavailable.
+  }
+  const features = [];
+
+  for (let i = 1; i < trip.samples.length; i++) {
+    const from = trip.samples[i - 1];
+    const to = trip.samples[i];
+    let geometry = new Polyline({ paths: [[from.point, to.point]], spatialReference: { wkid: 4326 } });
+    let matchMethod = "GPS direct";
+    let distanceMi = miles([from.point, to.point]);
+
+    try {
+      setStatus(`Road-matching segment ${i} of ${trip.samples.length - 1}… Keep this page open.`);
+      const parameters = new RouteParameters({
+        stops: new FeatureSet({ features: [
+          new Graphic({ geometry: new Point({ longitude: from.point[0], latitude: from.point[1] }) }),
+          new Graphic({ geometry: new Point({ longitude: to.point[0], latitude: to.point[1] }) })
+        ] }),
+        returnRoutes: true,
+        returnDirections: false,
+        returnStops: false,
+        outSpatialReference: { wkid: 4326 }
+      });
+      const solved = await task.solve(parameters);
+      const route = solved.routeResults?.[0]?.route;
+      if (!route?.geometry) throw new Error("No matched route was returned.");
+      geometry = route.geometry;
+      matchMethod = "Road snapped";
+      distanceMi = Number(route.attributes?.Total_Miles);
+      if (!Number.isFinite(distanceMi)) distanceMi = lineDistanceMiles(geometry);
+    } catch {
+      // Preserve the trip with a direct GPS line if a network match is unavailable.
+    }
+
+    features.push(new Graphic({
+      geometry,
+      attributes: {
+        trip_id: trip.id,
+        segment_seq: i,
+        from_sample_seq: from.sequence,
+        to_sample_seq: to.sequence,
+        speed_mph: to.speedMph,
+        distance_mi: distanceMi,
+        start_time: from.recordedAt,
+        end_time: to.recordedAt,
+        commute_type: trip.direction,
+        trip_date: localDate.getTime(),
+        match_method: matchMethod,
+        created_at: trip.endedAt
+      }
+    }));
+  }
+
+  trip.segmentFeatures = features;
+  return features;
 }
 
 function markSignedIn() {
@@ -133,6 +220,8 @@ function startCommute() {
     lastSampleAt: 0,
     routeSaved: false,
     samplesSaved: false,
+    segmentsSaved: false,
+    segmentFeatures: null,
     endedAt: null
   };
 
@@ -226,7 +315,15 @@ async function endCommute() {
       trip.samplesSaved = true;
     }
 
-    setStatus("Commute route and timestamped GPS samples saved privately to ArcGIS.");
+    if (!trip.segmentsSaved) {
+      const segmentFeatures = await buildRoadSegments(localDate);
+      setStatus(`Saving ${segmentFeatures.length} road-matched speed segments to ArcGIS…`);
+      const result = await speedSegmentsLayer.applyEdits({ addFeatures: segmentFeatures });
+      assertAddResults(result, "Road-matched speed segments");
+      trip.segmentsSaved = true;
+    }
+
+    setStatus("Commute route, GPS samples, and road-matched speed segments saved privately to ArcGIS.");
     reset();
   } catch (error) {
     setStatus(`Save failed: ${error.message}. Keep this page open and tap End Commute again to retry.`);

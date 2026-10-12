@@ -1,4 +1,4 @@
-const CACHE = "my-commute-tracker-v2";
+const CACHE = "my-commute-tracker-v3";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./app-config.js", "./manifest.webmanifest", "./oauth-callback.html"];
 
 self.addEventListener("install", (event) => {
