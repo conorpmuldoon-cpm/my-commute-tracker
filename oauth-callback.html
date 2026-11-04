@@ -8,7 +8,9 @@
     require(["esri/identity/IdentityManager"], function (esriId) {
       esriId.setOAuthResponseHash(window.location.hash);
       window.setTimeout(function () {
-        window.location.replace("./");
+        const returnPath = sessionStorage.getItem("commuteOAuthReturnPath") || "./";
+        sessionStorage.removeItem("commuteOAuthReturnPath");
+        window.location.replace(returnPath);
       }, 250);
     });
   </script>

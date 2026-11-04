@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b3a53" />
+  <title>My Commute Dashboard</title>
+  <link rel="stylesheet" href="https://js.arcgis.com/4.30/esri/themes/light/main.css" />
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <header>
+    <div><strong>My Commute Dashboard</strong><span>Road-matched speed and commute history</span></div>
+    <button id="sign-in">Sign in to ArcGIS</button>
+  </header>
+  <main>
+    <aside class="panel filters">
+      <h2>Filters</h2>
+      <label>Direction<select id="direction"><option value="">All commutes</option><option value="Morning">Morning</option><option value="Evening">Evening</option></select></label>
+      <label>Day of week<select id="day"><option value="">All days</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label>
+      <label>Minimum duration (minutes)<input id="min-duration" type="number" min="0" inputmode="decimal" /></label>
+      <label>Maximum duration (minutes)<input id="max-duration" type="number" min="0" inputmode="decimal" /></label>
+      <label>Date range<select id="date-range"><option value="0">All time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label>
+      <button id="apply" disabled>Apply filters</button>
+      <button id="reset" class="secondary" disabled>Reset</button>
+      <p id="status">Sign in to load private commute data.</p>
+    </aside>
+    <section class="content">
+      <section class="kpis" aria-label="Selected commute summary">
+        <div class="panel"><span>Selected trips</span><strong id="trip-count">—</strong></div>
+        <div class="panel"><span>Average duration</span><strong id="avg-duration">—</strong></div>
+        <div class="panel"><span>Typical speed</span><strong id="avg-speed">—</strong></div>
+        <div class="panel"><span>Average delay</span><strong id="avg-delay">—</strong></div>
+      </section>
+      <section id="viewDiv" aria-label="Speed-colored commute map"></section>
+      <section class="panel details">
+        <h2>Recent selected trips</h2>
+        <p id="segment-quality">Apply filters to see road-match quality.</p>
+        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Direction</th><th>Actual</th><th>Estimate</th><th>Delay</th><th>Distance</th></tr></thead><tbody id="trip-table"><tr><td colspan="6">No data loaded.</td></tr></tbody></table></div>
+      </section>
+    </section>
+  </main>
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

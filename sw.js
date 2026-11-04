@@ -1,5 +1,5 @@
-const CACHE = "my-commute-tracker-v4";
-const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./app-config.js", "./manifest.webmanifest", "./oauth-callback.html"];
+const CACHE = "my-commute-tracker-v5";
+const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./app-config.js", "./oauth-callback.html", "./manifest.webmanifest", "./dashboard.html", "./dashboard.css", "./dashboard.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
@@ -7,14 +7,10 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
-  );
+  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))));
   self.clients.claim();
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method === "GET") {
-    event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
-  }
+  if (event.request.method === "GET") event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
 });
