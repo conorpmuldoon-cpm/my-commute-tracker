@@ -6,8 +6,8 @@ import Graphic from "https://js.arcgis.com/4.30/@arcgis/core/Graphic.js";
 import Point from "https://js.arcgis.com/4.30/@arcgis/core/geometry/Point.js";
 import Polyline from "https://js.arcgis.com/4.30/@arcgis/core/geometry/Polyline.js";
 import Portal from "https://js.arcgis.com/4.30/@arcgis/core/portal/Portal.js";
-import RouteTask from "https://js.arcgis.com/4.30/@arcgis/core/rest/route/RouteTask.js";
-import RouteParameters from "https://js.arcgis.com/4.30/@arcgis/core/rest/route/RouteParameters.js";
+import * as route from "https://js.arcgis.com/4.30/@arcgis/core/rest/route.js";
+import RouteParameters from "https://js.arcgis.com/4.30/@arcgis/core/rest/support/RouteParameters.js";
 import FeatureSet from "https://js.arcgis.com/4.30/@arcgis/core/rest/support/FeatureSet.js";
 import OAuthInfo from "https://js.arcgis.com/4.30/@arcgis/core/identity/OAuthInfo.js";
 import esriId from "https://js.arcgis.com/4.30/@arcgis/core/identity/IdentityManager.js";
@@ -23,7 +23,7 @@ const view = new MapView({ container: "viewDiv", map, center: [-75.28, 40.0], zo
 const commuteLayer = new FeatureLayer({ url: appConfig.featureLayerUrl, outFields: ["*"] });
 const sampleLayer = new FeatureLayer({ url: appConfig.sampleLayerUrl, outFields: ["*"] });
 const speedSegmentsLayer = new FeatureLayer({ url: appConfig.speedSegmentsLayerUrl, outFields: ["*"] });
-let routeTaskPromise = null;
+let routeServiceUrlPromise = null;
 
 const oauth = new OAuthInfo({
   appId: appConfig.clientId,
@@ -103,18 +103,18 @@ async function loadPrivateLayers() {
   await Promise.all([commuteLayer.load(), sampleLayer.load(), speedSegmentsLayer.load()]);
 }
 
-async function getRouteTask() {
-  if (!routeTaskPromise) {
-    routeTaskPromise = (async () => {
+async function getRouteServiceUrl() {
+  if (!routeServiceUrlPromise) {
+    routeServiceUrlPromise = (async () => {
       const portal = new Portal({ url: appConfig.portalUrl });
       await portal.load();
       const routeUrl = portal.helperServices?.route?.url;
       if (!routeUrl) throw new Error("No ArcGIS routing service is configured for this portal.");
       await esriId.getCredential(routeUrl);
-      return new RouteTask({ url: routeUrl });
+      return routeUrl;
     })();
   }
-  return routeTaskPromise;
+  return routeServiceUrlPromise;
 }
 
 function lineDistanceMiles(geometry) {
@@ -123,9 +123,9 @@ function lineDistanceMiles(geometry) {
 
 async function buildRoadSegments(localDate) {
   if (trip.segmentFeatures) return trip.segmentFeatures;
-  let task = null;
+  let routeUrl = null;
   try {
-    task = await getRouteTask();
+    routeUrl = await getRouteServiceUrl();
   } catch {
     // The segments will still be preserved as direct GPS lines if routing is unavailable.
   }
@@ -150,7 +150,8 @@ async function buildRoadSegments(localDate) {
         returnStops: false,
         outSpatialReference: { wkid: 4326 }
       });
-      const solved = await task.solve(parameters);
+      if (!routeUrl) throw new Error("Routing is unavailable.");
+      const solved = await route.solve(routeUrl, parameters);
       const route = solved.routeResults?.[0]?.route;
       if (!route?.geometry) throw new Error("No matched route was returned.");
       geometry = route.geometry;
