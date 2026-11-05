@@ -1,4 +1,4 @@
-const CACHE = "my-commute-tracker-v5";
+const CACHE = "my-commute-tracker-v6-wake-lock";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./app-config.js", "./oauth-callback.html", "./manifest.webmanifest", "./dashboard.html", "./dashboard.css", "./dashboard.js"];
 
 self.addEventListener("install", (event) => {

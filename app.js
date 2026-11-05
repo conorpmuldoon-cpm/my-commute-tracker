@@ -15,7 +15,7 @@ import { appConfig } from "./app-config.js";
 
 const $ = (id) => document.getElementById(id);
 const startButton = $("start"), endButton = $("end"), status = $("status");
-let watchId = null, timerId = null, trip = null, signedIn = false;
+let watchId = null, timerId = null, trip = null, signedIn = false, wakeLock = null;
 
 const routeLayer = new GraphicsLayer({ title: "Active commute" });
 const map = new Map({ basemap: "streets-vector", layers: [routeLayer] });
@@ -34,6 +34,23 @@ const oauth = new OAuthInfo({
 esriId.registerOAuthInfos([oauth]);
 
 function setStatus(message) { status.textContent = message; }
+
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator) || wakeLock || !trip) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch {
+    // The commute can still be recorded if iOS or the browser declines the wake lock.
+  }
+}
+
+function releaseWakeLock() {
+  if (!wakeLock) return;
+  const activeLock = wakeLock;
+  wakeLock = null;
+  activeLock.release().catch(() => {});
+}
 
 function miles(points) {
   let meters = 0;
@@ -203,7 +220,7 @@ async function signIn() {
   }
 }
 
-function startCommute() {
+async function startCommute() {
   if (!signedIn || !navigator.geolocation) {
     setStatus("Location tracking is unavailable in this browser.");
     return;
@@ -236,6 +253,7 @@ function startCommute() {
   endButton.disabled = false;
   $("direction").disabled = true;
   $("estimate").disabled = true;
+  await requestWakeLock();
   setStatus("Tracking active. Keep this PWA open during the drive.");
 }
 
@@ -248,6 +266,7 @@ async function endCommute() {
   if (!trip) return;
   navigator.geolocation.clearWatch(watchId);
   window.clearInterval(timerId);
+  releaseWakeLock();
   endButton.disabled = true;
 
   if (trip.points.length < 2) {
@@ -333,6 +352,7 @@ async function endCommute() {
 }
 
 function reset() {
+  releaseWakeLock();
   trip = null;
   routeLayer.removeAll();
   startButton.disabled = !signedIn;
@@ -354,6 +374,10 @@ async function restoreSignedInSession() {
     // No saved ArcGIS session yet; the user can select Sign in to ArcGIS.
   }
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && trip && !wakeLock) requestWakeLock();
+});
 
 restoreSignedInSession();
 $("sign-in").addEventListener("click", signIn);
