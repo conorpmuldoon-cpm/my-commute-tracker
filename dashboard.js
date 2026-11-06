@@ -11,6 +11,9 @@ const segmentsLayer = new FeatureLayer({ url: appConfig.speedSegmentsLayerUrl, o
 const map = new Map({ basemap: "streets-vector", layers: [commuteLayer, segmentsLayer] });
 const view = new MapView({ container: "viewDiv", map, center: [-75.43, 40.06], zoom: 11 });
 let signedIn = false;
+let currentWhere = "1=0";
+let currentTrips = [];
+let selectedTripId = null;
 
 commuteLayer.renderer = { type: "simple", symbol: { type: "simple-line", color: "#64748b", width: 1.25 } };
 segmentsLayer.renderer = {
@@ -22,9 +25,19 @@ segmentsLayer.renderer = {
     { minValue: 50, maxValue: 999, label: "50+ mph", symbol: { type: "simple-line", color: "#1a9850", width: 3 } }
   ]
 };
-segmentsLayer.popupTemplate = { title: "{commute_type} segment {segment_seq} — {speed_mph} mph", content: [{ type: "fields", fieldInfos: [
-  { fieldName: "start_time", label: "Start" }, { fieldName: "end_time", label: "End" }, { fieldName: "distance_mi", label: "Distance (mi)" }, { fieldName: "match_method", label: "Match method" }
-] }] };
+segmentsLayer.popupTemplate = {
+  title: "{commute_type} segment {segment_seq}",
+  expressionInfos: [
+    { name: "speed_one_decimal", expression: "Round($feature.speed_mph, 1)" },
+    { name: "distance_feet", expression: "Round($feature.distance_mi * 5280, 0)" }
+  ],
+  content: [
+    { type: "text", text: "<b>Speed:</b> {expression/speed_one_decimal} mph<br><b>Distance:</b> {expression/distance_feet} ft" },
+    { type: "fields", fieldInfos: [
+      { fieldName: "start_time", label: "Start" }, { fieldName: "end_time", label: "End" }, { fieldName: "match_method", label: "Match method" }
+    ] }
+  ]
+};
 
 const oauth = new OAuthInfo({ appId: appConfig.clientId, portalUrl: appConfig.portalUrl, popup: false, popupCallbackUrl: appConfig.redirectUrl });
 esriId.registerOAuthInfos([oauth]);
@@ -34,6 +47,29 @@ function setKpi(id, value) { $(id).textContent = value; }
 function fmt(value, digits = 1) { return Number.isFinite(value) ? value.toFixed(digits) : "—"; }
 function quote(value) { return `'${String(value).replace(/'/g, "''")}'`; }
 function dateLabel(value) { return value ? new Date(value).toLocaleDateString() : "—"; }
+function weekdayLabel(value) { return value ? new Date(value).toLocaleDateString(undefined, { weekday: "long" }) : "—"; }
+
+async function selectTrip(tripId, zoom = true) {
+  if (!tripId || !currentTrips.some((feature) => feature.attributes.trip_id === tripId)) return;
+  selectedTripId = tripId;
+  const where = `trip_id = ${quote(tripId)}`;
+  commuteLayer.definitionExpression = where;
+  segmentsLayer.definitionExpression = where;
+  $("show-all").disabled = false;
+  document.querySelectorAll("#trip-table tr[data-trip-id]").forEach((row) => row.classList.toggle("selected", row.dataset.tripId === tripId));
+  const feature = currentTrips.find((item) => item.attributes.trip_id === tripId);
+  if (zoom && feature?.geometry) await view.goTo(feature, { padding: 50, duration: 400 });
+  setStatus("One commute selected. Use Show all selected trips to restore the filtered comparison.");
+}
+
+function showAllSelectedTrips() {
+  selectedTripId = null;
+  commuteLayer.definitionExpression = currentWhere;
+  segmentsLayer.definitionExpression = currentWhere;
+  $("show-all").disabled = true;
+  document.querySelectorAll("#trip-table tr[data-trip-id]").forEach((row) => row.classList.remove("selected"));
+  setStatus(`${currentTrips.length} trip${currentTrips.length === 1 ? "" : "s"} selected.`);
+}
 
 async function signIn() {
   try {
@@ -77,8 +113,12 @@ async function applyFilters() {
   });
   const ids = trips.map((feature) => feature.attributes.trip_id).filter(Boolean);
   const where = ids.length ? `trip_id IN (${ids.map(quote).join(",")})` : "1=0";
+  currentTrips = trips;
+  currentWhere = where;
+  selectedTripId = null;
   commuteLayer.definitionExpression = where;
   segmentsLayer.definitionExpression = where;
+  $("show-all").disabled = true;
   const totalMiles = trips.reduce((sum, feature) => sum + (Number(feature.attributes.distance_mi) || 0), 0);
   const totalMinutes = trips.reduce((sum, feature) => sum + (Number(feature.attributes.duration_min) || 0), 0);
   const delays = trips.map((feature) => Number(feature.attributes.delay_vs_estimate_min)).filter(Number.isFinite);
@@ -90,7 +130,10 @@ async function applyFilters() {
   const snapped = segmentResult.features.filter((f) => f.attributes.match_method === "Road snapped").length;
   const direct = segmentResult.features.filter((f) => f.attributes.match_method === "GPS direct").length;
   $("segment-quality").textContent = `${snapped} road-snapped segment${snapped === 1 ? "" : "s"}; ${direct} GPS-direct fallback segment${direct === 1 ? "" : "s"}.`;
-  $("trip-table").innerHTML = trips.slice(0, 12).map((feature) => { const a = feature.attributes; return `<tr><td>${dateLabel(a.trip_date)}</td><td>${a.commute_type || "—"}</td><td>${fmt(Number(a.duration_min))} min</td><td>${fmt(Number(a.google_estimate_min))} min</td><td>${fmt(Number(a.delay_vs_estimate_min))} min</td><td>${fmt(Number(a.distance_mi))} mi</td></tr>`; }).join("") || '<tr><td colspan="6">No trips match the selected filters.</td></tr>';
+  $("trip-table").innerHTML = trips.slice(0, 12).map((feature) => {
+    const a = feature.attributes;
+    return `<tr data-trip-id="${a.trip_id}"><td>${dateLabel(a.trip_date)}</td><td>${weekdayLabel(a.trip_date)}</td><td>${a.commute_type || "—"}</td><td>${fmt(Number(a.duration_min))} min</td><td>${fmt(Number(a.google_estimate_min))} min</td><td>${fmt(Number(a.delay_vs_estimate_min))} min</td><td>${fmt(Number(a.distance_mi))} mi</td></tr>`;
+  }).join("") || '<tr><td colspan="7">No trips match the selected filters.</td></tr>';
   if (trips.length) await view.goTo(trips, { padding: 50, duration: 400 });
   setStatus(`${trips.length} trip${trips.length === 1 ? "" : "s"} selected.`);
 }
@@ -98,9 +141,11 @@ async function applyFilters() {
 function resetFilters() {
   $("direction").value = ""; $("day").value = ""; $("min-duration").value = ""; $("max-duration").value = ""; $("date-range").value = "0";
   commuteLayer.definitionExpression = "1=1"; segmentsLayer.definitionExpression = "1=1";
+  currentTrips = []; currentWhere = "1=0"; selectedTripId = null;
+  $("show-all").disabled = true;
   ["trip-count","avg-duration","avg-speed","avg-delay"].forEach((id) => setKpi(id, "—"));
   $("segment-quality").textContent = "Apply filters to see road-match quality.";
-  $("trip-table").innerHTML = '<tr><td colspan="6">No data loaded.</td></tr>';
+  $("trip-table").innerHTML = '<tr><td colspan="7">No data loaded.</td></tr>';
   setStatus("Filters cleared.");
 }
 
@@ -113,6 +158,18 @@ async function restoreSession() {
 
 $("sign-in").addEventListener("click", signIn);
 $("apply").addEventListener("click", () => applyFilters().catch((error) => setStatus(`Filter failed: ${error.message}`)));
+$("show-all").addEventListener("click", showAllSelectedTrips);
 $("reset").addEventListener("click", resetFilters);
+$("show-routes").addEventListener("change", (event) => { commuteLayer.visible = event.target.checked; });
+$("show-segments").addEventListener("change", (event) => { segmentsLayer.visible = event.target.checked; });
+$("trip-table").addEventListener("click", (event) => {
+  const row = event.target.closest("tr[data-trip-id]");
+  if (row) selectTrip(row.dataset.tripId).catch((error) => setStatus(`Trip selection failed: ${error.message}`));
+});
+view.on("click", async (event) => {
+  const hit = await view.hitTest(event, { include: [commuteLayer, segmentsLayer] });
+  const graphic = hit.results.find((result) => result.graphic?.attributes?.trip_id)?.graphic;
+  if (graphic?.attributes?.trip_id) selectTrip(graphic.attributes.trip_id).catch((error) => setStatus(`Trip selection failed: ${error.message}`));
+});
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
 restoreSession();

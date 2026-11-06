@@ -22,7 +22,10 @@
       <label>Maximum duration (minutes)<input id="max-duration" type="number" min="0" inputmode="decimal" /></label>
       <label>Date range<select id="date-range"><option value="0">All time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label>
       <button id="apply" disabled>Apply filters</button>
+      <button id="show-all" class="secondary" disabled>Show all selected trips</button>
       <button id="reset" class="secondary" disabled>Reset</button>
+      <label class="toggle"><input id="show-routes" type="checkbox" checked /> Show whole-route reference lines</label>
+      <label class="toggle"><input id="show-segments" type="checkbox" checked /> Show speed-colored segments</label>
       <p id="status">Sign in to load private commute data.</p>
     </aside>
     <section class="content">
@@ -36,7 +39,7 @@
       <section class="panel details">
         <h2>Recent selected trips</h2>
         <p id="segment-quality">Apply filters to see road-match quality.</p>
-        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Direction</th><th>Actual</th><th>Estimate</th><th>Delay</th><th>Distance</th></tr></thead><tbody id="trip-table"><tr><td colspan="6">No data loaded.</td></tr></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Day</th><th>Direction</th><th>Actual</th><th>Estimate</th><th>Delay</th><th>Distance</th></tr></thead><tbody id="trip-table"><tr><td colspan="7">No data loaded.</td></tr></tbody></table></div>
       </section>
     </section>
   </main>
