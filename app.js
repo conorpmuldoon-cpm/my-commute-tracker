@@ -35,6 +35,10 @@ esriId.registerOAuthInfos([oauth]);
 
 function setStatus(message) { status.textContent = message; }
 
+function calculatedDirection(startedAt = Date.now()) {
+  return new Date(startedAt).getHours() < 12 ? "Morning" : "Evening";
+}
+
 async function requestWakeLock() {
   if (!("wakeLock" in navigator) || wakeLock || !trip) return;
   try {
@@ -138,13 +142,19 @@ function lineDistanceMiles(geometry) {
   return (geometry.paths || []).reduce((total, path) => total + miles(path), 0);
 }
 
+function conciseError(error) {
+  const message = error?.message || String(error || "Unknown routing error.");
+  return message.replace(/\s+/g, " ").slice(0, 220);
+}
+
 async function buildRoadSegments(localDate) {
   if (trip.segmentFeatures) return trip.segmentFeatures;
   let routeUrl = null;
+  let routingDiagnostic = "";
   try {
     routeUrl = await getRouteServiceUrl();
-  } catch {
-    // The segments will still be preserved as direct GPS lines if routing is unavailable.
+  } catch (error) {
+    routingDiagnostic = `Routing service unavailable: ${conciseError(error)}`;
   }
   const features = [];
 
@@ -175,8 +185,9 @@ async function buildRoadSegments(localDate) {
       matchMethod = "Road snapped";
       distanceMi = Number(route.attributes?.Total_Miles);
       if (!Number.isFinite(distanceMi)) distanceMi = lineDistanceMiles(geometry);
-    } catch {
+    } catch (error) {
       // Preserve the trip with a direct GPS line if a network match is unavailable.
+      if (!routingDiagnostic) routingDiagnostic = `Road-matching failed at segment ${i}: ${conciseError(error)}`;
     }
 
     features.push(new Graphic({
@@ -198,6 +209,11 @@ async function buildRoadSegments(localDate) {
     }));
   }
 
+  trip.roadMatchSummary = {
+    snapped: features.filter((feature) => feature.attributes.match_method === "Road snapped").length,
+    direct: features.filter((feature) => feature.attributes.match_method === "GPS direct").length,
+    diagnostic: routingDiagnostic
+  };
   trip.segmentFeatures = features;
   return features;
 }
@@ -226,13 +242,14 @@ async function startCommute() {
     return;
   }
 
-  const direction = $("direction").value;
+  const startedAt = Date.now();
+  const direction = calculatedDirection(startedAt);
   const estimate = Number($("estimate").value);
   trip = {
     id: crypto.randomUUID(),
     direction,
     estimate: Number.isFinite(estimate) && estimate > 0 ? estimate : null,
-    startedAt: Date.now(),
+    startedAt,
     points: [],
     samples: [],
     lastSampleAt: 0,
@@ -251,10 +268,10 @@ async function startCommute() {
   timerId = window.setInterval(refreshMetrics, 10000);
   startButton.disabled = true;
   endButton.disabled = false;
-  $("direction").disabled = true;
   $("estimate").disabled = true;
+  $("direction-label").textContent = direction === "Morning" ? "Morning: Home → Work" : "Evening: Work → Home";
   await requestWakeLock();
-  setStatus("Tracking active. Keep this PWA open during the drive.");
+  setStatus(`Tracking active as ${direction}. Keep this PWA open during the drive.`);
 }
 
 function assertAddResults(result, label) {
@@ -343,7 +360,9 @@ async function endCommute() {
       trip.segmentsSaved = true;
     }
 
-    setStatus("Commute route, GPS samples, and road-matched speed segments saved privately to ArcGIS.");
+    const match = trip.roadMatchSummary || { snapped: 0, direct: 0, diagnostic: "" };
+    const detail = match.diagnostic ? ` ${match.diagnostic}` : "";
+    setStatus(`Commute route and GPS samples saved. Segments: ${match.snapped} road-snapped, ${match.direct} GPS-direct fallback.${detail}`);
     reset();
   } catch (error) {
     setStatus(`Save failed: ${error.message}. Keep this page open and tap End Commute again to retry.`);
@@ -357,8 +376,8 @@ function reset() {
   routeLayer.removeAll();
   startButton.disabled = !signedIn;
   endButton.disabled = true;
-  $("direction").disabled = false;
   $("estimate").disabled = false;
+  $("direction-label").textContent = "Calculated when you start";
   $("elapsed").textContent = "0 min";
   $("distance").textContent = "0.0 mi";
   $("samples").textContent = "0";

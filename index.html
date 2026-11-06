@@ -13,9 +13,11 @@
   <header><strong>My Commute Tracker</strong><span id="account-status">Not signed in</span></header>
   <main>
     <section id="controls" class="card">
-      <label>Direction
-        <select id="direction"><option value="Morning">Morning: Home → Work</option><option value="Evening">Evening: Work → Home</option></select>
-      </label>
+      <div class="calculated-direction">
+        <span>Direction (automatic)</span>
+        <strong id="direction-label">Calculated when you start</strong>
+        <small>Before noon: Morning, Home → Work. Noon or later: Evening, Work → Home.</small>
+      </div>
       <label>Google Maps estimate (minutes)
         <input id="estimate" type="number" min="1" step="1" inputmode="numeric" placeholder="e.g., 32" />
       </label>
