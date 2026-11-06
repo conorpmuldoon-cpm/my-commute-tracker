@@ -179,11 +179,11 @@ async function buildRoadSegments(localDate) {
       });
       if (!routeUrl) throw new Error("Routing is unavailable.");
       const solved = await route.solve(routeUrl, parameters);
-      const route = solved.routeResults?.[0]?.route;
-      if (!route?.geometry) throw new Error("No matched route was returned.");
-      geometry = route.geometry;
+      const matchedRoute = solved.routeResults?.[0]?.route;
+      if (!matchedRoute?.geometry) throw new Error("No matched route was returned.");
+      geometry = matchedRoute.geometry;
       matchMethod = "Road snapped";
-      distanceMi = Number(route.attributes?.Total_Miles);
+      distanceMi = Number(matchedRoute.attributes?.Total_Miles);
       if (!Number.isFinite(distanceMi)) distanceMi = lineDistanceMiles(geometry);
     } catch (error) {
       // Preserve the trip with a direct GPS line if a network match is unavailable.
