@@ -149,6 +149,7 @@ function conciseError(error) {
 
 async function buildRoadSegments(localDate) {
   if (trip.segmentFeatures) return trip.segmentFeatures;
+  const intervalsPerWindow = 12;
   let routeUrl = null;
   let routingDiagnostic = "";
   try {
@@ -156,48 +157,51 @@ async function buildRoadSegments(localDate) {
   } catch (error) {
     routingDiagnostic = `Routing service unavailable: ${conciseError(error)}`;
   }
-  const features = [];
 
-  for (let i = 1; i < trip.samples.length; i++) {
-    const from = trip.samples[i - 1];
-    const to = trip.samples[i];
-    let geometry = new Polyline({ paths: [[from.point, to.point]], spatialReference: { wkid: 4326 } });
-    let matchMethod = "GPS direct";
-    let distanceMi = miles([from.point, to.point]);
+  const features = [];
+  const windowCount = Math.ceil((trip.samples.length - 1) / intervalsPerWindow);
+  for (let startIndex = 0, windowNumber = 1; startIndex < trip.samples.length - 1; startIndex += intervalsPerWindow, windowNumber++) {
+    const endIndex = Math.min(startIndex + intervalsPerWindow, trip.samples.length - 1);
+    const windowSamples = trip.samples.slice(startIndex, endIndex + 1);
+    const from = windowSamples[0];
+    const to = windowSamples[windowSamples.length - 1];
+    let geometry = new Polyline({ paths: [windowSamples.map((sample) => sample.point)], spatialReference: { wkid: 4326 } });
+    let matchMethod = "GPS direct window";
+    let distanceMi = miles(windowSamples.map((sample) => sample.point));
+    const elapsedHours = (to.recordedAt - from.recordedAt) / 3600000;
+    const speedMph = elapsedHours > 0 ? distanceMi / elapsedHours : to.speedMph;
 
     try {
-      setStatus(`Road-matching segment ${i} of ${trip.samples.length - 1}… Keep this page open.`);
+      setStatus(`Road-matching window ${windowNumber} of ${windowCount}… Keep this page open.`);
+      if (!routeUrl) throw new Error("Routing is unavailable.");
       const parameters = new RouteParameters({
-        stops: new FeatureSet({ features: [
-          new Graphic({ geometry: new Point({ longitude: from.point[0], latitude: from.point[1] }) }),
-          new Graphic({ geometry: new Point({ longitude: to.point[0], latitude: to.point[1] }) })
-        ] }),
+        stops: new FeatureSet({ features: windowSamples.map((sample) => new Graphic({
+          geometry: new Point({ longitude: sample.point[0], latitude: sample.point[1] })
+        })) }),
         returnRoutes: true,
         returnDirections: false,
         returnStops: false,
         outSpatialReference: { wkid: 4326 }
       });
-      if (!routeUrl) throw new Error("Routing is unavailable.");
       const solved = await route.solve(routeUrl, parameters);
       const matchedRoute = solved.routeResults?.[0]?.route;
       if (!matchedRoute?.geometry) throw new Error("No matched route was returned.");
       geometry = matchedRoute.geometry;
-      matchMethod = "Road snapped";
+      matchMethod = "Road matched window";
       distanceMi = Number(matchedRoute.attributes?.Total_Miles);
       if (!Number.isFinite(distanceMi)) distanceMi = lineDistanceMiles(geometry);
     } catch (error) {
-      // Preserve the trip with a direct GPS line if a network match is unavailable.
-      if (!routingDiagnostic) routingDiagnostic = `Road-matching failed at segment ${i}: ${conciseError(error)}`;
+      if (!routingDiagnostic) routingDiagnostic = `Road matching failed at window ${windowNumber}: ${conciseError(error)}`;
     }
 
     features.push(new Graphic({
       geometry,
       attributes: {
         trip_id: trip.id,
-        segment_seq: i,
+        segment_seq: startIndex + 1,
         from_sample_seq: from.sequence,
         to_sample_seq: to.sequence,
-        speed_mph: to.speedMph,
+        speed_mph: speedMph,
         distance_mi: distanceMi,
         start_time: from.recordedAt,
         end_time: to.recordedAt,
@@ -210,8 +214,8 @@ async function buildRoadSegments(localDate) {
   }
 
   trip.roadMatchSummary = {
-    snapped: features.filter((feature) => feature.attributes.match_method === "Road snapped").length,
-    direct: features.filter((feature) => feature.attributes.match_method === "GPS direct").length,
+    snapped: features.filter((feature) => feature.attributes.match_method === "Road matched window").length,
+    direct: features.filter((feature) => feature.attributes.match_method === "GPS direct window").length,
     diagnostic: routingDiagnostic
   };
   trip.segmentFeatures = features;
@@ -362,7 +366,7 @@ async function endCommute() {
 
     const match = trip.roadMatchSummary || { snapped: 0, direct: 0, diagnostic: "" };
     const detail = match.diagnostic ? ` ${match.diagnostic}` : "";
-    setStatus(`Commute route and GPS samples saved. Segments: ${match.snapped} road-snapped, ${match.direct} GPS-direct fallback.${detail}`);
+    setStatus(`Commute route and GPS samples saved. Windows: ${match.snapped} road-matched, ${match.direct} GPS-direct fallback.${detail}`);
     reset();
   } catch (error) {
     setStatus(`Save failed: ${error.message}. Keep this page open and tap End Commute again to retry.`);
