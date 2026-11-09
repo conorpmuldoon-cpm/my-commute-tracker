@@ -131,7 +131,10 @@ async function previewWindowedMatch() {
     previewStatus("Select one trip before building a preview.");
     return;
   }
-  const contextRadius = 2; // Two samples before and after makes a short, overlapping context window.
+  // One solve now covers a small run of original intervals. Guard samples on both
+  // sides retain the overlapping road context used to extract each core interval.
+  const coreIntervalsPerWindow = 10;
+  const guardSamples = 2;
   previewLayer.removeAll();
   $("preview").disabled = true;
   previewStatus("Loading raw GPS samples for the selected trip…");
@@ -149,34 +152,20 @@ async function previewWindowedMatch() {
       speedMph: Number(feature.attributes.speed_mph)
     })).filter((sample) => sample.point.every(Number.isFinite));
     if (samples.length < 2) throw new Error("This trip does not have enough GPS samples for a preview.");
+
     const routeUrl = await getPreviewRouteServiceUrl();
+    const segmentCount = samples.length - 1;
+    const windowCount = Math.ceil(segmentCount / coreIntervalsPerWindow);
     const graphics = [];
     let fallbackCount = 0;
-    const segmentCount = samples.length - 1;
-    for (let index = 0; index < segmentCount; index++) {
+
+    const addIntervalGraphic = (index, matchedGeometry) => {
       const from = samples[index], to = samples[index + 1];
       const directPoints = [from.point, to.point];
       const elapsedHours = (to.recordedAt - from.recordedAt) / 3600000;
       const speedMph = Number.isFinite(to.speedMph) ? to.speedMph : (elapsedHours > 0 ? pointMiles(...directPoints) / elapsedHours : null);
-      const contextSamples = samples.slice(Math.max(0, index - contextRadius), Math.min(samples.length, index + contextRadius + 2));
-      let geometry = new Polyline({ paths: [directPoints], spatialReference: { wkid: 4326 } });
-      let fallback = true;
-      previewStatus(`Context-matching interval ${index + 1} of ${segmentCount}…`);
-      try {
-        const parameters = new RouteParameters({
-          stops: new FeatureSet({ features: contextSamples.map((sample) => new Graphic({ geometry: new Point({ longitude: sample.point[0], latitude: sample.point[1] }) })) }),
-          returnRoutes: true,
-          returnDirections: false,
-          returnStops: false,
-          outSpatialReference: { wkid: 4326 }
-        });
-        const matchedRoute = (await route.solve(routeUrl, parameters)).routeResults?.[0]?.route;
-        const extracted = matchedRoute?.geometry && contextSegment(matchedRoute.geometry, from.point, to.point);
-        if (extracted) {
-          geometry = extracted;
-          fallback = false;
-        }
-      } catch { /* A direct raw segment is intentionally retained below. */ }
+      const geometry = matchedGeometry || new Polyline({ paths: [directPoints], spatialReference: { wkid: 4326 } });
+      const fallback = !matchedGeometry;
       if (fallback) fallbackCount++;
       graphics.push(new Graphic({
         geometry,
@@ -186,10 +175,39 @@ async function previewWindowedMatch() {
         attributes: { preview: true, speed_mph: speedMph, from_sample_seq: from.sequence, to_sample_seq: to.sequence, match_method: fallback ? "GPS direct preview fallback" : "Context-matched preview" },
         popupTemplate: { title: "Preview interval {from_sample_seq}–{to_sample_seq}", content: "<b>Original local speed:</b> {speed_mph} mph<br><b>Method:</b> {match_method}" }
       }));
+    };
+
+    for (let windowIndex = 0; windowIndex < windowCount; windowIndex++) {
+      const coreStart = windowIndex * coreIntervalsPerWindow;
+      const coreEnd = Math.min(segmentCount, coreStart + coreIntervalsPerWindow);
+      const contextStart = Math.max(0, coreStart - guardSamples);
+      const contextEnd = Math.min(samples.length, coreEnd + 1 + guardSamples);
+      const contextSamples = samples.slice(contextStart, contextEnd);
+      previewStatus(`Preparing window ${windowIndex + 1} of ${windowCount}: intervals ${coreStart + 1}–${coreEnd} of ${segmentCount}…`);
+      // Yield once so this status is painted before the network solve begins.
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+
+      let routeGeometry = null;
+      try {
+        const parameters = new RouteParameters({
+          stops: new FeatureSet({ features: contextSamples.map((sample) => new Graphic({ geometry: new Point({ longitude: sample.point[0], latitude: sample.point[1] }) })) }),
+          returnRoutes: true,
+          returnDirections: false,
+          returnStops: false,
+          outSpatialReference: { wkid: 4326 }
+        });
+        routeGeometry = (await route.solve(routeUrl, parameters)).routeResults?.[0]?.route?.geometry || null;
+      } catch { /* Every core interval in an unavailable window falls back individually below. */ }
+
+      for (let index = coreStart; index < coreEnd; index++) {
+        const matchedGeometry = routeGeometry && contextSegment(routeGeometry, samples[index].point, samples[index + 1].point);
+        addIntervalGraphic(index, matchedGeometry);
+      }
     }
+
     previewLayer.addMany(graphics);
     $("clear-preview").disabled = false;
-    previewStatus(`Temporary preview complete: ${graphics.length - fallbackCount} context-matched interval${graphics.length - fallbackCount === 1 ? "" : "s"}; ${fallbackCount} gray dotted raw-direct fallback${fallbackCount === 1 ? "" : "s"}. Nothing was saved or changed.`);
+    previewStatus(`Temporary preview complete after ${windowCount} context-window route solve${windowCount === 1 ? "" : "s"}: ${graphics.length - fallbackCount} context-matched interval${graphics.length - fallbackCount === 1 ? "" : "s"}; ${fallbackCount} gray dotted raw-direct fallback${fallbackCount === 1 ? "" : "s"}. Nothing was saved or changed.`);
   } catch (error) {
     previewStatus(`Preview failed: ${error.message}`);
   } finally {
