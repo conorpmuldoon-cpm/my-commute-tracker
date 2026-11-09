@@ -96,12 +96,42 @@ async function getPreviewRouteServiceUrl() {
   return previewRouteServiceUrlPromise;
 }
 
+function pointMiles(a, b) {
+  const radians = Math.PI / 180, r = 6371000;
+  const h = Math.sin((b[1] - a[1]) * radians / 2) ** 2 + Math.cos(a[1] * radians) * Math.cos(b[1] * radians) * Math.sin((b[0] - a[0]) * radians / 2) ** 2;
+  return (2 * r * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h))) / 1609.344;
+}
+
+function pathMiles(points) {
+  return points.slice(1).reduce((sum, point, index) => sum + pointMiles(points[index], point), 0);
+}
+
+function contextSegment(geometry, fromPoint, toPoint) {
+  // The overlapping solve supplies road context. Extract only the portion nearest
+  // this original GPS interval, rather than drawing the entire context window.
+  const points = (geometry.paths || []).flat();
+  if (points.length < 2) return null;
+  const nearestIndex = (target) => points.reduce((best, point, index) => {
+    const distance = pointMiles(target, point);
+    return distance < best.distance ? { index, distance } : best;
+  }, { index: -1, distance: Infinity });
+  const from = nearestIndex(fromPoint), to = nearestIndex(toPoint);
+  if (from.index < 0 || to.index <= from.index) return null;
+  const extracted = points.slice(from.index, to.index + 1);
+  const directMiles = pointMiles(fromPoint, toPoint);
+  const extractedMiles = pathMiles(extracted);
+  const endpointToleranceMi = Math.max(0.08, directMiles * 0.9);
+  const maxRouteMiles = Math.max(0.15, directMiles * 3.5 + 0.05);
+  if (from.distance > endpointToleranceMi || to.distance > endpointToleranceMi || extractedMiles > maxRouteMiles) return null;
+  return new Polyline({ paths: [extracted], spatialReference: { wkid: 4326 } });
+}
+
 async function previewWindowedMatch() {
   if (!selectedTripId) {
     previewStatus("Select one trip before building a preview.");
     return;
   }
-  const intervalCount = Number($("preview-window").value);
+  const contextRadius = 2; // Two samples before and after makes a short, overlapping context window.
   previewLayer.removeAll();
   $("preview").disabled = true;
   previewStatus("Loading raw GPS samples for the selected trip…");
@@ -120,53 +150,46 @@ async function previewWindowedMatch() {
     })).filter((sample) => sample.point.every(Number.isFinite));
     if (samples.length < 2) throw new Error("This trip does not have enough GPS samples for a preview.");
     const routeUrl = await getPreviewRouteServiceUrl();
-    const windowCount = Math.ceil((samples.length - 1) / intervalCount);
     const graphics = [];
     let fallbackCount = 0;
-    for (let startIndex = 0, windowNumber = 1; startIndex < samples.length - 1; startIndex += intervalCount, windowNumber++) {
-      const endIndex = Math.min(startIndex + intervalCount, samples.length - 1);
-      const windowSamples = samples.slice(startIndex, endIndex + 1);
-      const from = windowSamples[0];
-      const to = windowSamples[windowSamples.length - 1];
+    const segmentCount = samples.length - 1;
+    for (let index = 0; index < segmentCount; index++) {
+      const from = samples[index], to = samples[index + 1];
+      const directPoints = [from.point, to.point];
       const elapsedHours = (to.recordedAt - from.recordedAt) / 3600000;
-      const rawMiles = windowSamples.slice(1).reduce((sum, sample, index) => {
-        const a = windowSamples[index].point, b = sample.point;
-        const radians = Math.PI / 180, r = 6371000;
-        const h = Math.sin((b[1] - a[1]) * radians / 2) ** 2 + Math.cos(a[1] * radians) * Math.cos(b[1] * radians) * Math.sin((b[0] - a[0]) * radians / 2) ** 2;
-        return sum + (2 * r * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h))) / 1609.344;
-      }, 0);
-      const speedMph = elapsedHours > 0 ? rawMiles / elapsedHours : to.speedMph;
-      let geometry = new Polyline({ paths: [windowSamples.map((sample) => sample.point)], spatialReference: { wkid: 4326 } });
-      let fallback = false;
-      previewStatus(`Road-matching preview window ${windowNumber} of ${windowCount}…`);
+      const speedMph = Number.isFinite(to.speedMph) ? to.speedMph : (elapsedHours > 0 ? pointMiles(...directPoints) / elapsedHours : null);
+      const contextSamples = samples.slice(Math.max(0, index - contextRadius), Math.min(samples.length, index + contextRadius + 2));
+      let geometry = new Polyline({ paths: [directPoints], spatialReference: { wkid: 4326 } });
+      let fallback = true;
+      previewStatus(`Context-matching interval ${index + 1} of ${segmentCount}…`);
       try {
         const parameters = new RouteParameters({
-          stops: new FeatureSet({ features: windowSamples.map((sample) => new Graphic({ geometry: new Point({ longitude: sample.point[0], latitude: sample.point[1] }) })) }),
+          stops: new FeatureSet({ features: contextSamples.map((sample) => new Graphic({ geometry: new Point({ longitude: sample.point[0], latitude: sample.point[1] }) })) }),
           returnRoutes: true,
           returnDirections: false,
           returnStops: false,
           outSpatialReference: { wkid: 4326 }
         });
-        const solved = await route.solve(routeUrl, parameters);
-        const matchedRoute = solved.routeResults?.[0]?.route;
-        if (!matchedRoute?.geometry) throw new Error("No route returned.");
-        geometry = matchedRoute.geometry;
-      } catch {
-        fallback = true;
-        fallbackCount++;
-      }
+        const matchedRoute = (await route.solve(routeUrl, parameters)).routeResults?.[0]?.route;
+        const extracted = matchedRoute?.geometry && contextSegment(matchedRoute.geometry, from.point, to.point);
+        if (extracted) {
+          geometry = extracted;
+          fallback = false;
+        }
+      } catch { /* A direct raw segment is intentionally retained below. */ }
+      if (fallback) fallbackCount++;
       graphics.push(new Graphic({
         geometry,
         symbol: fallback
           ? { type: "simple-line", color: "#64748b", width: 2, style: "short-dot" }
           : { type: "simple-line", color: previewColor(speedMph), width: 4 },
-        attributes: { preview: true, speed_mph: speedMph, from_sample_seq: from.sequence, to_sample_seq: to.sequence, match_method: fallback ? "GPS direct preview" : "Road matched preview" },
-        popupTemplate: { title: "Preview window {from_sample_seq}–{to_sample_seq}", content: "<b>Speed:</b> {speed_mph} mph<br><b>Method:</b> {match_method}" }
+        attributes: { preview: true, speed_mph: speedMph, from_sample_seq: from.sequence, to_sample_seq: to.sequence, match_method: fallback ? "GPS direct preview fallback" : "Context-matched preview" },
+        popupTemplate: { title: "Preview interval {from_sample_seq}–{to_sample_seq}", content: "<b>Original local speed:</b> {speed_mph} mph<br><b>Method:</b> {match_method}" }
       }));
     }
     previewLayer.addMany(graphics);
     $("clear-preview").disabled = false;
-    previewStatus(`Preview complete: ${graphics.length - fallbackCount} road-matched window${graphics.length - fallbackCount === 1 ? "" : "s"}; ${fallbackCount} GPS-direct fallback window${fallbackCount === 1 ? "" : "s"}. Toggle the existing speed segments off to compare the preview with the raw route.`);
+    previewStatus(`Temporary preview complete: ${graphics.length - fallbackCount} context-matched interval${graphics.length - fallbackCount === 1 ? "" : "s"}; ${fallbackCount} gray dotted raw-direct fallback${fallbackCount === 1 ? "" : "s"}. Nothing was saved or changed.`);
   } catch (error) {
     previewStatus(`Preview failed: ${error.message}`);
   } finally {
