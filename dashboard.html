@@ -22,6 +22,10 @@
       <label>Maximum duration (minutes)<input id="max-duration" type="number" min="0" inputmode="decimal" /></label>
       <label>Date range<select id="date-range"><option value="0">All time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label>
       <button id="apply" disabled>Apply filters</button>
+      <label>Road-match preview window<select id="preview-window"><option value="6">6 intervals (~1 minute)</option><option value="12" selected>12 intervals (~2 minutes)</option><option value="24">24 intervals (~4 minutes)</option></select></label>
+      <button id="preview" disabled>Preview selected trip</button>
+      <button id="clear-preview" class="secondary" disabled>Clear preview</button>
+      <p id="preview-status">Select one trip to build a temporary preview from its raw GPS samples.</p>
       <button id="show-all" class="secondary" disabled>Show all selected trips</button>
       <button id="reset" class="secondary" disabled>Reset</button>
       <label class="toggle"><input id="show-routes" type="checkbox" checked /> Show whole-route reference lines</label>
