@@ -40,12 +40,12 @@ segmentsLayer.renderer = {
     if (speed <= 50) return '30–50 mph';
     return '50+ mph';`,
   uniqueValueInfos: [
-    { value: "0–5 mph", label: "Road-derived: 0–5 mph", symbol: { type: "simple-line", color: "#d73027", width: 3 } },
-    { value: "5–15 mph", label: "Road-derived: 5–15 mph", symbol: { type: "simple-line", color: "#fc8d59", width: 3 } },
-    { value: "15–30 mph", label: "Road-derived: 15–30 mph", symbol: { type: "simple-line", color: "#fee08b", width: 3 } },
-    { value: "30–50 mph", label: "Road-derived: 30–50 mph", symbol: { type: "simple-line", color: "#91cf60", width: 3 } },
-    { value: "50+ mph", label: "Road-derived: 50+ mph", symbol: { type: "simple-line", color: "#1a9850", width: 3 } },
-    { value: "fallback", label: "GPS-direct fallback", symbol: { type: "simple-line", color: "#64748b", width: 1.5, style: "short-dot" } },
+    { value: "0–5 mph", label: "Context matched: 0–5 mph", symbol: { type: "simple-line", color: "#d73027", width: 3 } },
+    { value: "5–15 mph", label: "Context matched: 5–15 mph", symbol: { type: "simple-line", color: "#fc8d59", width: 3 } },
+    { value: "15–30 mph", label: "Context matched: 15–30 mph", symbol: { type: "simple-line", color: "#fee08b", width: 3 } },
+    { value: "30–50 mph", label: "Context matched: 30–50 mph", symbol: { type: "simple-line", color: "#91cf60", width: 3 } },
+    { value: "50+ mph", label: "Context matched: 50+ mph", symbol: { type: "simple-line", color: "#1a9850", width: 3 } },
+    { value: "fallback", label: "GPS direct fallback", symbol: { type: "simple-line", color: "#64748b", width: 1.5, style: "short-dot" } },
     { value: "unknown", label: "No speed", symbol: { type: "simple-line", color: "#9ca3af", width: 1.5, style: "short-dot" } }
   ]
 };
@@ -247,8 +247,8 @@ async function updateSummary(trips, where) {
   setKpi("avg-delay", delays.length ? `${fmt(delays.reduce((a, b) => a + b, 0) / delays.length)} min` : "—");
   const segmentResult = trips.length ? await segmentsLayer.queryFeatures({ where, outFields: ["match_method"], returnGeometry: false }) : { features: [] };
   const fallback = segmentResult.features.filter((feature) => String(feature.attributes.match_method || "").startsWith("GPS direct")).length;
-  const roadDerived = segmentResult.features.length - fallback;
-  $("segment-quality").textContent = `${roadDerived} road-derived feature${roadDerived === 1 ? "" : "s"}; ${fallback} GPS-direct fallback feature${fallback === 1 ? "" : "s"}.`;
+  const contextMatched = segmentResult.features.length - fallback;
+  $("segment-quality").textContent = `${contextMatched} Context matched feature${contextMatched === 1 ? "" : "s"}; ${fallback} GPS direct fallback feature${fallback === 1 ? "" : "s"}.`;
 }
 
 async function showAllSelectedTrips() {

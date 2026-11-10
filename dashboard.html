@@ -10,7 +10,7 @@
 </head>
 <body>
   <header>
-    <div><strong>My Commute Dashboard</strong><span>Road-matched speed and commute history</span></div>
+    <div><strong>My Commute Dashboard</strong><span>Context-matched speed and commute history</span></div>
     <button id="sign-in">Sign in to ArcGIS</button>
   </header>
   <main>
@@ -22,7 +22,7 @@
       <label>Maximum duration (minutes)<input id="max-duration" type="number" min="0" inputmode="decimal" /></label>
       <label>Date range<select id="date-range"><option value="0">All time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label>
       <button id="apply" disabled>Apply filters</button>
-      <p class="preview-note"><strong>Temporary, no-save preview:</strong> uses the selected trip’s Commute Samples. It preserves one segment for every original ~10-second interval and its recorded local-speed color. Short overlapping context windows (about 10 intervals at a time) are road-solved once per window; implausible interval matches remain gray dotted raw direct segments.</p>
+      <p class="preview-note"><strong>Context matching:</strong> saved v14 trips keep one solid, speed-colored Context matched segment for every original ~10-second interval. Short overlapping windows are checked for ordered projections, heading, endpoints, and detours; low-confidence intervals remain gray dotted GPS direct fallbacks. Processing needs the active app to remain open.</p>
       <button id="preview" disabled>Build batched context-matched preview</button>
       <button id="clear-preview" class="secondary" disabled>Clear preview</button>
       <p id="preview-status">Select one trip to build a temporary, unsaved preview. Progress is shown for each context window.</p>

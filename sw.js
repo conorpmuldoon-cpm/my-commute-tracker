@@ -1,4 +1,4 @@
-const CACHE = "my-commute-tracker-v13-batched-context-preview";
+const CACHE = "my-commute-tracker-v14-context-aware-production";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./app-config.js", "./oauth-callback.html", "./manifest.webmanifest", "./dashboard.html", "./dashboard.css", "./dashboard.js"];
 
 self.addEventListener("install", (event) => {

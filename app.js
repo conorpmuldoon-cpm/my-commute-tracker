@@ -85,6 +85,24 @@ function redrawRoute() {
   }));
 }
 
+function normalizeHeading(value) {
+  return Number.isFinite(value) && value >= 0 && value < 360 ? value : null;
+}
+
+function bearingDegrees(from, to) {
+  const radians = Math.PI / 180;
+  const lon1 = from[0] * radians, lon2 = to[0] * radians;
+  const lat1 = from[1] * radians, lat2 = to[1] * radians;
+  const y = Math.sin(lon2 - lon1) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function headingDifference(a, b) {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.abs(((a - b + 540) % 360) - 180);
+}
+
 function recordPosition(position) {
   if (!trip || position.coords.accuracy > 75) return;
 
@@ -92,8 +110,19 @@ function recordPosition(position) {
   const point = [position.coords.longitude, position.coords.latitude];
   const lastPoint = trip.points[trip.points.length - 1];
   const lastSample = trip.samples[trip.samples.length - 1];
+  const browserHeading = normalizeHeading(position.coords.heading);
+  const inferredHeading = lastPoint && miles([lastPoint, point]) >= 0.01 ? bearingDegrees(lastPoint, point) : null;
+  const candidateHeading = browserHeading ?? inferredHeading;
 
-  if (lastSample && capturedAt - lastSample.recordedAt < 9000) return;
+  // Keep the normal cadence near nine seconds. A trustworthy, meaningful course
+  // change can retain an extra point after five seconds, improving turn context
+  // without adding fields to the private sample schema.
+  if (lastSample) {
+    const elapsedMs = capturedAt - lastSample.recordedAt;
+    const turnDegrees = headingDifference(candidateHeading, lastSample.heading);
+    const meaningfulTurn = elapsedMs >= 5000 && Number.isFinite(turnDegrees) && turnDegrees >= 30;
+    if (elapsedMs < 9000 && !meaningfulTurn) return;
+  }
 
   let speedMph = null;
   if (lastPoint && lastSample) {
@@ -107,6 +136,8 @@ function recordPosition(position) {
     recordedAt: capturedAt,
     speedMph,
     accuracyM: position.coords.accuracy,
+    // Runtime-only context; this is intentionally not persisted in sample attributes.
+    heading: candidateHeading,
     sequence: trip.samples.length + 1
   });
   trip.lastSampleAt = capturedAt;
@@ -147,78 +178,143 @@ function conciseError(error) {
   return message.replace(/\s+/g, " ").slice(0, 220);
 }
 
+function flattenRoutePoints(geometry) {
+  return (geometry?.paths || []).flat().filter((point) => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1]));
+}
+
+function projectOnRoute(routePoints, target) {
+  // Local equirectangular projection is sufficient for short commute windows and
+  // gives a stable distance-along-route measure for ordering checks.
+  const metersPerDegree = 111320;
+  const cosLat = Math.cos(target[1] * Math.PI / 180);
+  let best = null, accumulatedMi = 0;
+  for (let index = 0; index < routePoints.length - 1; index++) {
+    const a = routePoints[index], b = routePoints[index + 1];
+    const ax = (a[0] - target[0]) * metersPerDegree * cosLat, ay = (a[1] - target[1]) * metersPerDegree;
+    const bx = (b[0] - target[0]) * metersPerDegree * cosLat, by = (b[1] - target[1]) * metersPerDegree;
+    const dx = bx - ax, dy = by - ay, lengthSquared = dx * dx + dy * dy;
+    const t = lengthSquared ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / lengthSquared)) : 0;
+    const projected = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    const distanceMi = miles([target, projected]);
+    const segmentMi = miles([a, b]);
+    if (!best || distanceMi < best.distanceMi) best = { index, t, point: projected, distanceMi, measureMi: accumulatedMi + segmentMi * t };
+    accumulatedMi += segmentMi;
+  }
+  return best;
+}
+
+function extractContextInterval(routeGeometry, from, to, previousEndMeasure) {
+  const routePoints = flattenRoutePoints(routeGeometry);
+  const directMi = miles([from.point, to.point]);
+  if (routePoints.length < 2 || directMi < 0.004) return null;
+  const start = projectOnRoute(routePoints, from.point);
+  const end = projectOnRoute(routePoints, to.point);
+  if (!start || !end || end.measureMi <= start.measureMi + 0.002) return null;
+
+  const accuracyMi = Math.max(Number(from.accuracyM) || 0, Number(to.accuracyM) || 0) / 1609.344;
+  const endpointToleranceMi = Math.min(0.16, Math.max(0.045, accuracyMi * 1.75, directMi * 0.8));
+  // Reject a route projection that reverses or jumps backward from the prior
+  // accepted interval in the same ordered context solve.
+  if (start.distanceMi > endpointToleranceMi || end.distanceMi > endpointToleranceMi ||
+      (Number.isFinite(previousEndMeasure) && start.measureMi < previousEndMeasure - 0.015)) return null;
+
+  const extracted = [start.point];
+  for (let index = start.index + 1; index <= end.index; index++) extracted.push(routePoints[index]);
+  extracted.push(end.point);
+  const routeMi = lineDistanceMiles({ paths: [extracted] });
+  const maxDetourMi = Math.max(0.12, directMi * 3.0 + 0.04);
+  if (!Number.isFinite(routeMi) || routeMi < directMi * 0.45 || routeMi > maxDetourMi) return null;
+
+  const gpsBearing = bearingDegrees(from.point, to.point);
+  const routeBearing = bearingDegrees(extracted[0], extracted[extracted.length - 1]);
+  const intervalHeading = from.heading ?? gpsBearing;
+  // A turn can occur inside an interval, so this is intentionally broad; it
+  // only rejects a route whose overall travel direction conflicts with GPS.
+  if (headingDifference(gpsBearing, routeBearing) > 80 || headingDifference(intervalHeading, routeBearing) > 105) return null;
+
+  return { geometry: new Polyline({ paths: [extracted], spatialReference: { wkid: 4326 } }), distanceMi: routeMi, endMeasureMi: end.measureMi };
+}
+
 async function buildRoadSegments(localDate) {
   if (trip.segmentFeatures) return trip.segmentFeatures;
-  let routeUrl = null;
+  const segmentCount = trip.samples.length - 1;
+  const coreIntervalsPerWindow = 10;
+  const guardSamples = 2;
+  const windowCount = Math.ceil(segmentCount / coreIntervalsPerWindow);
+  const matched = new Map();
   let routingDiagnostic = "";
+  let routeUrl = null;
   try {
     routeUrl = await getRouteServiceUrl();
   } catch (error) {
     routingDiagnostic = `Routing service unavailable: ${conciseError(error)}`;
   }
 
-  // Production storage intentionally remains one feature per captured GPS interval
-  // (normally about 10 seconds). Context-window matching is preview-only in the dashboard.
-  const features = [];
-  const segmentCount = trip.samples.length - 1;
-  for (let startIndex = 0; startIndex < segmentCount; startIndex++) {
-    const from = trip.samples[startIndex];
-    const to = trip.samples[startIndex + 1];
-    const directPoints = [from.point, to.point];
-    let geometry = new Polyline({ paths: [directPoints], spatialReference: { wkid: 4326 } });
-    let matchMethod = "GPS direct segment";
-    let distanceMi = miles(directPoints);
-    const elapsedHours = (to.recordedAt - from.recordedAt) / 3600000;
-    const speedMph = Number.isFinite(to.speedMph) ? to.speedMph : (elapsedHours > 0 ? distanceMi / elapsedHours : null);
-
+  for (let windowIndex = 0; routeUrl && windowIndex < windowCount; windowIndex++) {
+    const coreStart = windowIndex * coreIntervalsPerWindow;
+    const coreEnd = Math.min(segmentCount, coreStart + coreIntervalsPerWindow);
+    const contextStart = Math.max(0, coreStart - guardSamples);
+    const contextEnd = Math.min(trip.samples.length, coreEnd + 1 + guardSamples);
+    setStatus(`Context road-matching window ${windowIndex + 1} of ${windowCount}: intervals ${coreStart + 1}–${coreEnd} of ${segmentCount}… Keep this page open.`);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
     try {
-      setStatus(`Road-matching segment ${startIndex + 1} of ${segmentCount}… Keep this page open.`);
-      if (!routeUrl) throw new Error("Routing is unavailable.");
+      const contextSamples = trip.samples.slice(contextStart, contextEnd);
       const parameters = new RouteParameters({
-        stops: new FeatureSet({ features: [from, to].map((sample) => new Graphic({
-          geometry: new Point({ longitude: sample.point[0], latitude: sample.point[1] })
-        })) }),
+        stops: new FeatureSet({ features: contextSamples.map((sample) => new Graphic({ geometry: new Point({ longitude: sample.point[0], latitude: sample.point[1] }) })) }),
+        findBestSequence: false,
+        preserveFirstStop: true,
+        preserveLastStop: true,
         returnRoutes: true,
         returnDirections: false,
         returnStops: false,
         outSpatialReference: { wkid: 4326 }
       });
-      const solved = await route.solve(routeUrl, parameters);
-      const matchedRoute = solved.routeResults?.[0]?.route;
-      if (!matchedRoute?.geometry) throw new Error("No matched route was returned.");
-      geometry = matchedRoute.geometry;
-      matchMethod = "Road matched segment";
-      distanceMi = Number(matchedRoute.attributes?.Total_Miles);
-      if (!Number.isFinite(distanceMi)) distanceMi = lineDistanceMiles(geometry);
+      const geometry = (await route.solve(routeUrl, parameters)).routeResults?.[0]?.route?.geometry;
+      if (!geometry) throw new Error("No route geometry was returned.");
+      let previousEndMeasure = null;
+      for (let index = coreStart; index < coreEnd; index++) {
+        const interval = extractContextInterval(geometry, trip.samples[index], trip.samples[index + 1], previousEndMeasure);
+        if (interval) {
+          matched.set(index, interval);
+          previousEndMeasure = interval.endMeasureMi;
+        }
+      }
     } catch (error) {
-      if (!routingDiagnostic) routingDiagnostic = `Road matching failed at segment ${startIndex + 1}: ${conciseError(error)}`;
+      if (!routingDiagnostic) routingDiagnostic = `Context window ${windowIndex + 1} failed: ${conciseError(error)}`;
     }
+  }
 
+  const features = [];
+  for (let index = 0; index < segmentCount; index++) {
+    const from = trip.samples[index], to = trip.samples[index + 1];
+    const directPoints = [from.point, to.point];
+    const contextMatch = matched.get(index);
+    const directDistanceMi = miles(directPoints);
+    const elapsedHours = (to.recordedAt - from.recordedAt) / 3600000;
+    // Preserve the original per-interval local speed; never average it across a window.
+    const speedMph = Number.isFinite(to.speedMph) ? to.speedMph : (elapsedHours > 0 ? directDistanceMi / elapsedHours : null);
     features.push(new Graphic({
-      geometry,
+      geometry: contextMatch?.geometry || new Polyline({ paths: [directPoints], spatialReference: { wkid: 4326 } }),
       attributes: {
         trip_id: trip.id,
-        segment_seq: startIndex + 1,
+        segment_seq: index + 1,
         from_sample_seq: from.sequence,
         to_sample_seq: to.sequence,
         speed_mph: speedMph,
-        distance_mi: distanceMi,
+        distance_mi: contextMatch?.distanceMi ?? directDistanceMi,
         start_time: from.recordedAt,
         end_time: to.recordedAt,
         commute_type: trip.direction,
         trip_date: localDate.getTime(),
-        match_method: matchMethod,
+        match_method: contextMatch ? "Context matched segment" : "GPS direct segment",
         created_at: trip.endedAt
       }
     }));
   }
 
-  trip.roadMatchSummary = {
-    snapped: features.filter((feature) => feature.attributes.match_method === "Road matched segment").length,
-    direct: features.filter((feature) => feature.attributes.match_method === "GPS direct segment").length,
-    diagnostic: routingDiagnostic
-  };
+  trip.roadMatchSummary = { snapped: matched.size, direct: segmentCount - matched.size, diagnostic: routingDiagnostic };
   trip.segmentFeatures = features;
+  setStatus(`Context road-matching complete: ${matched.size} context-matched, ${segmentCount - matched.size} GPS-direct fallback intervals.`);
   return features;
 }
 
@@ -366,7 +462,7 @@ async function endCommute() {
 
     const match = trip.roadMatchSummary || { snapped: 0, direct: 0, diagnostic: "" };
     const detail = match.diagnostic ? ` ${match.diagnostic}` : "";
-    setStatus(`Commute route and GPS samples saved. Segments: ${match.snapped} road-matched, ${match.direct} GPS-direct fallback.${detail}`);
+    setStatus(`Commute route and GPS samples saved. Segments: ${match.snapped} context-matched, ${match.direct} GPS-direct fallback.${detail}`);
     reset();
   } catch (error) {
     setStatus(`Save failed: ${error.message}. Keep this page open and tap End Commute again to retry.`);
