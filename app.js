@@ -5,6 +5,7 @@ import GraphicsLayer from "https://js.arcgis.com/4.30/@arcgis/core/layers/Graphi
 import Graphic from "https://js.arcgis.com/4.30/@arcgis/core/Graphic.js";
 import Point from "https://js.arcgis.com/4.30/@arcgis/core/geometry/Point.js";
 import Polyline from "https://js.arcgis.com/4.30/@arcgis/core/geometry/Polyline.js";
+import SpatialReference from "https://js.arcgis.com/4.30/@arcgis/core/geometry/SpatialReference.js";
 import Portal from "https://js.arcgis.com/4.30/@arcgis/core/portal/Portal.js";
 import * as route from "https://js.arcgis.com/4.30/@arcgis/core/rest/route.js";
 import RouteParameters from "https://js.arcgis.com/4.30/@arcgis/core/rest/support/RouteParameters.js";
@@ -16,6 +17,9 @@ import { appConfig } from "./app-config.js";
 const $ = (id) => document.getElementById(id);
 const startButton = $("start"), endButton = $("end"), status = $("status");
 let watchId = null, timerId = null, trip = null, signedIn = false, wakeLock = null;
+// Use an SDK SpatialReference instance throughout. Plain `{ wkid: 4326 }` values
+// can reach the route/applyEdits serializers uncast in some 4.30 browser builds.
+const wgs84 = new SpatialReference({ wkid: 4326 });
 
 const routeLayer = new GraphicsLayer({ title: "Active commute" });
 const map = new Map({ basemap: "streets-vector", layers: [routeLayer] });
@@ -80,7 +84,7 @@ function redrawRoute() {
   routeLayer.removeAll();
   if (trip.points.length < 2) return;
   routeLayer.add(new Graphic({
-    geometry: new Polyline({ paths: [trip.points], spatialReference: { wkid: 4326 } }),
+    geometry: new Polyline({ paths: [trip.points], spatialReference: wgs84 }),
     symbol: { type: "simple-line", color: "#e4572e", width: 4 }
   }));
 }
@@ -232,7 +236,7 @@ function extractContextInterval(routeGeometry, from, to, previousEndMeasure) {
   // only rejects a route whose overall travel direction conflicts with GPS.
   if (headingDifference(gpsBearing, routeBearing) > 80 || headingDifference(intervalHeading, routeBearing) > 105) return null;
 
-  return { geometry: new Polyline({ paths: [extracted], spatialReference: { wkid: 4326 } }), distanceMi: routeMi, endMeasureMi: end.measureMi };
+  return { geometry: new Polyline({ paths: [extracted], spatialReference: wgs84 }), distanceMi: routeMi, endMeasureMi: end.measureMi };
 }
 
 async function buildRoadSegments(localDate) {
@@ -259,15 +263,18 @@ async function buildRoadSegments(localDate) {
     await new Promise((resolve) => requestAnimationFrame(resolve));
     try {
       const contextSamples = trip.samples.slice(contextStart, contextEnd);
+      // Keep RouteParameters to documented, required values. Passing an SDK
+      // SpatialReference instance avoids the 4.30 serializer path that can try
+      // to call `split()` on a plain spatial-reference object.
       const parameters = new RouteParameters({
-        stops: new FeatureSet({ features: contextSamples.map((sample) => new Graphic({ geometry: new Point({ longitude: sample.point[0], latitude: sample.point[1] }) })) }),
-        findBestSequence: false,
-        preserveFirstStop: true,
-        preserveLastStop: true,
+        stops: new FeatureSet({
+          features: contextSamples.map((sample) => new Graphic({
+            geometry: new Point({ x: sample.point[0], y: sample.point[1], spatialReference: wgs84 })
+          }))
+        }),
         returnRoutes: true,
         returnDirections: false,
-        returnStops: false,
-        outSpatialReference: { wkid: 4326 }
+        outSpatialReference: wgs84
       });
       const geometry = (await route.solve(routeUrl, parameters)).routeResults?.[0]?.route?.geometry;
       if (!geometry) throw new Error("No route geometry was returned.");
@@ -294,7 +301,7 @@ async function buildRoadSegments(localDate) {
     // Preserve the original per-interval local speed; never average it across a window.
     const speedMph = Number.isFinite(to.speedMph) ? to.speedMph : (elapsedHours > 0 ? directDistanceMi / elapsedHours : null);
     features.push(new Graphic({
-      geometry: contextMatch?.geometry || new Polyline({ paths: [directPoints], spatialReference: { wkid: 4326 } }),
+      geometry: contextMatch?.geometry || new Polyline({ paths: [directPoints], spatialReference: wgs84 }),
       attributes: {
         trip_id: trip.id,
         segment_seq: index + 1,
@@ -396,6 +403,8 @@ async function endCommute() {
   const duration = (trip.endedAt - trip.startedAt) / 60000;
   const localDate = new Date(trip.startedAt);
   localDate.setHours(0, 0, 0, 0);
+  // Kept until completion so a retry resumes only unfinished stages.
+  let saveStage = "preparing the completed trip";
 
   const routeAttributes = {
     trip_id: trip.id,
@@ -414,9 +423,9 @@ async function endCommute() {
 
   const sampleFeatures = trip.samples.map((sample) => new Graphic({
     geometry: new Point({
-      longitude: sample.point[0],
-      latitude: sample.point[1],
-      spatialReference: { wkid: 4326 }
+      x: sample.point[0],
+      y: sample.point[1],
+      spatialReference: wgs84
     }),
     attributes: {
       trip_id: trip.id,
@@ -434,10 +443,11 @@ async function endCommute() {
 
   try {
     if (!trip.routeSaved) {
+      saveStage = "route save";
       setStatus("Saving private commute route to ArcGIS…");
       const result = await commuteLayer.applyEdits({
         addFeatures: [new Graphic({
-          geometry: new Polyline({ paths: [trip.points], spatialReference: { wkid: 4326 } }),
+          geometry: new Polyline({ paths: [trip.points], spatialReference: wgs84 }),
           attributes: routeAttributes
         })]
       });
@@ -446,6 +456,7 @@ async function endCommute() {
     }
 
     if (!trip.samplesSaved) {
+      saveStage = "samples save";
       setStatus(`Saving ${sampleFeatures.length} private GPS samples to ArcGIS…`);
       const result = await sampleLayer.applyEdits({ addFeatures: sampleFeatures });
       assertAddResults(result, "GPS samples");
@@ -453,7 +464,9 @@ async function endCommute() {
     }
 
     if (!trip.segmentsSaved) {
+      saveStage = "road matching";
       const segmentFeatures = await buildRoadSegments(localDate);
+      saveStage = "derived-segment save";
       setStatus(`Saving ${segmentFeatures.length} road-matched speed segments to ArcGIS…`);
       const result = await speedSegmentsLayer.applyEdits({ addFeatures: segmentFeatures });
       assertAddResults(result, "Road-matched speed segments");
@@ -465,7 +478,9 @@ async function endCommute() {
     setStatus(`Commute route and GPS samples saved. Segments: ${match.snapped} context-matched, ${match.direct} GPS-direct fallback.${detail}`);
     reset();
   } catch (error) {
-    setStatus(`Save failed: ${error.message}. Keep this page open and tap End Commute again to retry.`);
+    // Do not reset `trip`: completed GPS data and completed stages stay in memory
+    // and End Commute resumes at the stage identified below.
+    setStatus(`Save failed during ${saveStage}: ${conciseError(error)}. Keep this page open and tap End Commute again to retry.`);
     endButton.disabled = false;
   }
 }
