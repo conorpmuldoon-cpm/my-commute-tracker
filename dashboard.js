@@ -5,6 +5,7 @@ import GraphicsLayer from "https://js.arcgis.com/4.30/@arcgis/core/layers/Graphi
 import Graphic from "https://js.arcgis.com/4.30/@arcgis/core/Graphic.js";
 import Point from "https://js.arcgis.com/4.30/@arcgis/core/geometry/Point.js";
 import Polyline from "https://js.arcgis.com/4.30/@arcgis/core/geometry/Polyline.js";
+import SpatialReference from "https://js.arcgis.com/4.30/@arcgis/core/geometry/SpatialReference.js";
 import Portal from "https://js.arcgis.com/4.30/@arcgis/core/portal/Portal.js";
 import * as route from "https://js.arcgis.com/4.30/@arcgis/core/rest/route.js";
 import RouteParameters from "https://js.arcgis.com/4.30/@arcgis/core/rest/support/RouteParameters.js";
@@ -13,6 +14,7 @@ import OAuthInfo from "https://js.arcgis.com/4.30/@arcgis/core/identity/OAuthInf
 import esriId from "https://js.arcgis.com/4.30/@arcgis/core/identity/IdentityManager.js";
 import { appConfig } from "./app-config.js";
 
+const wgs84 = new SpatialReference({ wkid: 4326 });
 const $ = (id) => document.getElementById(id);
 const commuteLayer = new FeatureLayer({ url: appConfig.featureLayerUrl, outFields: ["*"] });
 const segmentsLayer = new FeatureLayer({ url: appConfig.speedSegmentsLayerUrl, outFields: ["*"] });
@@ -164,7 +166,7 @@ async function previewWindowedMatch() {
       const directPoints = [from.point, to.point];
       const elapsedHours = (to.recordedAt - from.recordedAt) / 3600000;
       const speedMph = Number.isFinite(to.speedMph) ? to.speedMph : (elapsedHours > 0 ? pointMiles(...directPoints) / elapsedHours : null);
-      const geometry = matchedGeometry || new Polyline({ paths: [directPoints], spatialReference: { wkid: 4326 } });
+      const geometry = matchedGeometry || new Polyline({ paths: [directPoints], spatialReference: wgs84 });
       const fallback = !matchedGeometry;
       if (fallback) fallbackCount++;
       graphics.push(new Graphic({
@@ -190,11 +192,13 @@ async function previewWindowedMatch() {
       let routeGeometry = null;
       try {
         const parameters = new RouteParameters({
-          stops: new FeatureSet({ features: contextSamples.map((sample) => new Graphic({ geometry: new Point({ longitude: sample.point[0], latitude: sample.point[1] }) })) }),
+          stops: new FeatureSet({
+            features: contextSamples.map((sample) => new Graphic({
+              geometry: new Point({ x: sample.point[0], y: sample.point[1], spatialReference: wgs84 })
+            }))
+          }),
           returnRoutes: true,
-          returnDirections: false,
-          returnStops: false,
-          outSpatialReference: { wkid: 4326 }
+          returnDirections: false
         });
         routeGeometry = (await route.solve(routeUrl, parameters)).routeResults?.[0]?.route?.geometry || null;
       } catch { /* Every core interval in an unavailable window falls back individually below. */ }
@@ -359,5 +363,4 @@ view.on("click", async (event) => {
   const graphic = hit.results.find((result) => result.graphic?.attributes?.trip_id)?.graphic;
   if (graphic?.attributes?.trip_id) selectTrip(graphic.attributes.trip_id).catch((error) => setStatus(`Trip selection failed: ${error.message}`));
 });
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
-restoreSession();
+if ("serviceWorker" in navigator) navigator.serviceW

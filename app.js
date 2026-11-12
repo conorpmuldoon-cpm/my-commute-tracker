@@ -263,9 +263,12 @@ async function buildRoadSegments(localDate) {
     await new Promise((resolve) => requestAnimationFrame(resolve));
     try {
       const contextSamples = trip.samples.slice(contextStart, contextEnd);
-      // Keep RouteParameters to documented, required values. Passing an SDK
-      // SpatialReference instance avoids the 4.30 serializer path that can try
-      // to call `split()` on a plain spatial-reference object.
+      // Do not send outSpatialReference. In the 4.30 route serializer, that
+      // optional parameter can still reach a string-only serialization branch
+      // and fail with `r.split is not a function`, even when given an SDK
+      // SpatialReference instance. The route service returns the route in the
+      // stop geometry's WGS84 spatial reference, so the matcher remains in
+      // longitude/latitude coordinates without that parameter.
       const parameters = new RouteParameters({
         stops: new FeatureSet({
           features: contextSamples.map((sample) => new Graphic({
@@ -273,8 +276,7 @@ async function buildRoadSegments(localDate) {
           }))
         }),
         returnRoutes: true,
-        returnDirections: false,
-        outSpatialReference: wgs84
+        returnDirections: false
       });
       const geometry = (await route.solve(routeUrl, parameters)).routeResults?.[0]?.route?.geometry;
       if (!geometry) throw new Error("No route geometry was returned.");

@@ -1,4 +1,4 @@
-const CACHE = "my-commute-tracker-v15-route-serialization-fix";
+const CACHE = "my-commute-tracker-v16-route-serializer-workaround";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./app-config.js", "./oauth-callback.html", "./manifest.webmanifest", "./dashboard.html", "./dashboard.css", "./dashboard.js"];
 
 self.addEventListener("install", (event) => {

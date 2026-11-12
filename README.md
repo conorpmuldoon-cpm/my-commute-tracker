@@ -19,9 +19,9 @@ The production recorder keeps **one derived polyline per original GPS interval**
 
 At trip end, the active app processes short ordered, overlapping GPS context windows (10 core intervals with two guard samples on each side). It extracts one road-correlated portion for each core interval only when endpoint proximity, route/GPS heading, projection order/continuity, and detour/backtracking checks are plausible. Any uncertain interval is deliberately saved as an individual gray dotted **GPS direct** fallback; accepted intervals are solid, speed-colored **Context matched** lines in the dashboard. Matching and saving require the PWA to remain open with network access until the final status reports the context-matched and fallback counts.
 
-### v15 route serialization fix
+### v16 route-serializer workaround
 
-v15 uses a real ArcGIS `SpatialReference` instance for all WGS84 geometries and for `RouteParameters.outSpatialReference`; it also limits route solve parameters to the documented values needed by the context matcher. This avoids a 4.30 JavaScript API serialization path that can raise `r.split is not a function` when a plain spatial-reference object is serialized.
+The observed error screen confirms that v15 reached the road-matching stage, but its `RouteParameters.outSpatialReference` setting still entered an ArcGIS Maps SDK for JavaScript 4.30 string-only serializer branch. v16 deliberately omits that optional parameter. Stops continue to use real WGS84 `SpatialReference` instances, and the route service returns geometry in the stop geometry's WGS84 reference for the context matcher. The service-worker cache name is also versioned to ensure the revised module is installed.
 
 End-of-trip persistence is staged. If a failure occurs, the status now names **route save**, **samples save**, **road matching**, or **derived-segment save**. The completed trip remains in memory and **End commute** can be pressed again to resume only unfinished stages. Do not refresh or close the PWA before a retry succeeds.
 
