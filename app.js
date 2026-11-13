@@ -1,4 +1,4 @@
-import Map from "https://js.arcgis.com/4.30/@arcgis/core/Map.js";
+import EsriMap from "https://js.arcgis.com/4.30/@arcgis/core/Map.js";
 import MapView from "https://js.arcgis.com/4.30/@arcgis/core/views/MapView.js";
 import FeatureLayer from "https://js.arcgis.com/4.30/@arcgis/core/layers/FeatureLayer.js";
 import GraphicsLayer from "https://js.arcgis.com/4.30/@arcgis/core/layers/GraphicsLayer.js";
@@ -14,7 +14,7 @@ import OAuthInfo from "https://js.arcgis.com/4.30/@arcgis/core/identity/OAuthInf
 import esriId from "https://js.arcgis.com/4.30/@arcgis/core/identity/IdentityManager.js";
 import { appConfig } from "./app-config.js";
 
-const BUILD_VERSION = "v20";
+const BUILD_VERSION = "v21";
 const $ = (id) => document.getElementById(id);
 const startButton = $("start"), endButton = $("end"), status = $("status");
 let watchId = null, timerId = null, trip = null, signedIn = false, wakeLock = null;
@@ -23,7 +23,7 @@ let watchId = null, timerId = null, trip = null, signedIn = false, wakeLock = nu
 const wgs84 = new SpatialReference({ wkid: 4326 });
 
 const routeLayer = new GraphicsLayer({ title: "Active commute" });
-const map = new Map({ basemap: "streets-vector", layers: [routeLayer] });
+const map = new EsriMap({ basemap: "streets-vector", layers: [routeLayer] });
 const view = new MapView({ container: "viewDiv", map, center: [-75.28, 40.0], zoom: 10 });
 const commuteLayer = new FeatureLayer({ url: appConfig.featureLayerUrl, outFields: ["*"] });
 const sampleLayer = new FeatureLayer({ url: appConfig.sampleLayerUrl, outFields: ["*"] });
@@ -244,7 +244,9 @@ async function buildRoadSegments(localDate) {
   if (trip.segmentFeatures) return trip.segmentFeatures;
   const segmentCount = trip.samples.length - 1;
   const features = [];
-  const matched = new Map();
+  // Explicitly use the native lookup Map. The ArcGIS map class is named EsriMap
+  // above so it can never shadow this JavaScript collection.
+  const matched = new globalThis.Map();
   let routingDiagnostic = "";
 
   // Checkpoint 1: build and retain independently savable GPS-direct features

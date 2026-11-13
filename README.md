@@ -19,9 +19,9 @@ The production recorder keeps **one derived polyline per original GPS interval**
 
 At trip end, the active app processes short ordered, overlapping GPS context windows (10 core intervals with two guard samples on each side). It extracts one road-correlated portion for each core interval only when endpoint proximity, route/GPS heading, projection order/continuity, and detour/backtracking checks are plausible. Any uncertain interval is deliberately saved as an individual gray dotted **GPS direct** fallback; accepted intervals are solid, speed-colored **Context matched** lines in the dashboard. Matching and saving require the PWA to remain open with network access until the final status reports the context-matched and fallback counts.
 
-### v20 segment diagnostics
+### v21 native Map fix
 
-v20 separates segment preparation into visible checkpoints: GPS-direct fallback preparation, optional road matching, and application of confirmed context matches. A temporary **Diagnostic: save GPS-direct segments only** option skips the routing service completely for a controlled persistence test. The resulting error status names the exact checkpoint that failed. The header visibly displays `v20`; network-first PWA updates remain in place.
+v20 proved GPS-direct segments can save. It also exposed `undefined`/`NaN` segment counts, revealing that the imported ArcGIS `Map` class had accidentally shadowed JavaScript's native `Map` collection used for matched intervals. v21 renames the ArcGIS map import to `EsriMap` and explicitly creates the interval lookup with `globalThis.Map`. The diagnostic direct-segments-only option remains available, and the header visibly displays `v21`.
 
 End-of-trip persistence is staged. If a failure occurs, the status now names **route save**, **samples save**, **road matching**, or **derived-segment save**. The completed trip remains in memory and **End commute** can be pressed again to resume only unfinished stages. Do not refresh or close the PWA before a retry succeeds.
 

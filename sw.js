@@ -1,4 +1,4 @@
-const CACHE = "my-commute-tracker-v20-segment-diagnostics";
+const CACHE = "my-commute-tracker-v21-native-map-fix";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./app-config.js", "./oauth-callback.html", "./manifest.webmanifest", "./dashboard.html", "./dashboard.css", "./dashboard.js"];
 
 self.addEventListener("install", (event) => {
