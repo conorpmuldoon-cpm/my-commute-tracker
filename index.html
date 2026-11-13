@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header><strong>My Commute Tracker</strong><span id="account-status">Not signed in · v19</span></header>
+  <header><strong>My Commute Tracker</strong><span id="account-status">Not signed in · v20</span></header>
   <main>
     <section id="controls" class="card">
       <div class="calculated-direction">
@@ -21,6 +21,7 @@
       <label>Google Maps estimate (minutes)
         <input id="estimate" type="number" min="1" step="1" inputmode="numeric" placeholder="e.g., 32" />
       </label>
+      <label class="diagnostic-toggle"><input id="direct-segments-only" type="checkbox" /> Diagnostic: save GPS-direct segments only</label>
       <button id="sign-in">Sign in to ArcGIS</button>
       <button id="start" disabled>Start commute</button>
       <button id="end" class="danger" disabled>End commute</button>

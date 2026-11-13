@@ -14,7 +14,7 @@ import OAuthInfo from "https://js.arcgis.com/4.30/@arcgis/core/identity/OAuthInf
 import esriId from "https://js.arcgis.com/4.30/@arcgis/core/identity/IdentityManager.js";
 import { appConfig } from "./app-config.js";
 
-const BUILD_VERSION = "v19";
+const BUILD_VERSION = "v20";
 const $ = (id) => document.getElementById(id);
 const startButton = $("start"), endButton = $("end"), status = $("status");
 let watchId = null, timerId = null, trip = null, signedIn = false, wakeLock = null;
@@ -243,11 +243,55 @@ function extractContextInterval(routeGeometry, from, to, previousEndMeasure) {
 async function buildRoadSegments(localDate) {
   if (trip.segmentFeatures) return trip.segmentFeatures;
   const segmentCount = trip.samples.length - 1;
+  const features = [];
+  const matched = new Map();
+  let routingDiagnostic = "";
+
+  // Checkpoint 1: build and retain independently savable GPS-direct features
+  // before any optional routing request is made.
+  trip.segmentBuildStage = "preparing GPS-direct fallback segments";
+  setStatus(`Diagnostic: preparing ${segmentCount} GPS-direct fallback segments…`);
+  try {
+    for (let index = 0; index < segmentCount; index++) {
+      const from = trip.samples[index], to = trip.samples[index + 1];
+      const directPoints = [from.point, to.point];
+      const directDistanceMi = miles(directPoints);
+      const elapsedHours = (to.recordedAt - from.recordedAt) / 3600000;
+      const speedMph = Number.isFinite(to.speedMph) ? to.speedMph : (elapsedHours > 0 ? directDistanceMi / elapsedHours : null);
+      features.push(new Graphic({
+        geometry: new Polyline({ paths: [directPoints], spatialReference: wgs84 }),
+        attributes: {
+          trip_id: trip.id,
+          segment_seq: index + 1,
+          from_sample_seq: from.sequence,
+          to_sample_seq: to.sequence,
+          speed_mph: speedMph,
+          distance_mi: directDistanceMi,
+          start_time: from.recordedAt,
+          end_time: to.recordedAt,
+          commute_type: trip.direction,
+          trip_date: localDate.getTime(),
+          match_method: "GPS direct segment",
+          created_at: trip.endedAt
+        }
+      }));
+    }
+  } catch (error) {
+    throw new Error(`GPS-direct fallback preparation failed: ${conciseError(error)}`);
+  }
+
+  if (trip.directSegmentsOnly) {
+    trip.segmentBuildStage = "GPS-direct diagnostic mode complete";
+    trip.roadMatchSummary = { snapped: 0, direct: segmentCount, diagnostic: "Diagnostic mode: ArcGIS route matching was skipped." };
+    trip.segmentFeatures = features;
+    return features;
+  }
+
+  // Checkpoint 2: route matching is optional and can never discard the direct features.
+  trip.segmentBuildStage = "requesting optional road matching";
   const coreIntervalsPerWindow = 10;
   const guardSamples = 2;
   const windowCount = Math.ceil(segmentCount / coreIntervalsPerWindow);
-  const matched = new Map();
-  let routingDiagnostic = "";
   let routeUrl = null;
   try {
     routeUrl = await getRouteServiceUrl();
@@ -255,84 +299,60 @@ async function buildRoadSegments(localDate) {
     routingDiagnostic = `Routing service unavailable: ${conciseError(error)}`;
   }
 
-  // Road matching is an optional enhancement. No unexpected SDK or browser
-  // error from this phase may prevent saving per-interval GPS-direct segments.
   try {
     for (let windowIndex = 0; routeUrl && windowIndex < windowCount; windowIndex++) {
-    const coreStart = windowIndex * coreIntervalsPerWindow;
-    const coreEnd = Math.min(segmentCount, coreStart + coreIntervalsPerWindow);
-    const contextStart = Math.max(0, coreStart - guardSamples);
-    const contextEnd = Math.min(trip.samples.length, coreEnd + 1 + guardSamples);
-    setStatus(`Context road-matching window ${windowIndex + 1} of ${windowCount}: intervals ${coreStart + 1}–${coreEnd} of ${segmentCount}… Keep this page open.`);
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-    try {
-      const contextSamples = trip.samples.slice(contextStart, contextEnd);
-      // Do not send outSpatialReference. In the 4.30 route serializer, that
-      // optional parameter can still reach a string-only serialization branch
-      // and fail with `r.split is not a function`, even when given an SDK
-      // SpatialReference instance. The route service returns the route in the
-      // stop geometry's WGS84 spatial reference, so the matcher remains in
-      // longitude/latitude coordinates without that parameter.
-      const parameters = new RouteParameters({
-        stops: new FeatureSet({
-          features: contextSamples.map((sample) => new Graphic({
-            geometry: new Point({ x: sample.point[0], y: sample.point[1], spatialReference: wgs84 })
-          }))
-        }),
-        returnRoutes: true,
-        returnDirections: false
-      });
-      const geometry = (await route.solve(routeUrl, parameters)).routeResults?.[0]?.route?.geometry;
-      if (!geometry) throw new Error("No route geometry was returned.");
-      let previousEndMeasure = null;
-      for (let index = coreStart; index < coreEnd; index++) {
-        const interval = extractContextInterval(geometry, trip.samples[index], trip.samples[index + 1], previousEndMeasure);
-        if (interval) {
-          matched.set(index, interval);
-          previousEndMeasure = interval.endMeasureMi;
+      const coreStart = windowIndex * coreIntervalsPerWindow;
+      const coreEnd = Math.min(segmentCount, coreStart + coreIntervalsPerWindow);
+      const contextStart = Math.max(0, coreStart - guardSamples);
+      const contextEnd = Math.min(trip.samples.length, coreEnd + 1 + guardSamples);
+      setStatus(`Diagnostic: matching window ${windowIndex + 1} of ${windowCount}…`);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      try {
+        const contextSamples = trip.samples.slice(contextStart, contextEnd);
+        const parameters = new RouteParameters({
+          stops: new FeatureSet({
+            features: contextSamples.map((sample) => new Graphic({
+              geometry: new Point({ x: sample.point[0], y: sample.point[1], spatialReference: wgs84 })
+            }))
+          }),
+          returnRoutes: true,
+          returnDirections: false
+        });
+        const geometry = (await route.solve(routeUrl, parameters)).routeResults?.[0]?.route?.geometry;
+        if (!geometry) throw new Error("No route geometry was returned.");
+        let previousEndMeasure = null;
+        for (let index = coreStart; index < coreEnd; index++) {
+          const interval = extractContextInterval(geometry, trip.samples[index], trip.samples[index + 1], previousEndMeasure);
+          if (interval) {
+            matched.set(index, interval);
+            previousEndMeasure = interval.endMeasureMi;
+          }
         }
+      } catch (error) {
+        if (!routingDiagnostic) routingDiagnostic = `Context window ${windowIndex + 1} failed: ${conciseError(error)}`;
       }
-    } catch (error) {
-      if (!routingDiagnostic) routingDiagnostic = `Context window ${windowIndex + 1} failed: ${conciseError(error)}`;
-    }
     }
   } catch (error) {
-    // Preserve any intervals already matched; remaining intervals are saved as
-    // GPS-direct fallbacks below instead of failing the completed commute.
     if (!routingDiagnostic) routingDiagnostic = `Road matching was skipped: ${conciseError(error)}`;
   }
 
-  const features = [];
-  for (let index = 0; index < segmentCount; index++) {
-    const from = trip.samples[index], to = trip.samples[index + 1];
-    const directPoints = [from.point, to.point];
-    const contextMatch = matched.get(index);
-    const directDistanceMi = miles(directPoints);
-    const elapsedHours = (to.recordedAt - from.recordedAt) / 3600000;
-    // Preserve the original per-interval local speed; never average it across a window.
-    const speedMph = Number.isFinite(to.speedMph) ? to.speedMph : (elapsedHours > 0 ? directDistanceMi / elapsedHours : null);
-    features.push(new Graphic({
-      geometry: contextMatch?.geometry || new Polyline({ paths: [directPoints], spatialReference: wgs84 }),
-      attributes: {
-        trip_id: trip.id,
-        segment_seq: index + 1,
-        from_sample_seq: from.sequence,
-        to_sample_seq: to.sequence,
-        speed_mph: speedMph,
-        distance_mi: contextMatch?.distanceMi ?? directDistanceMi,
-        start_time: from.recordedAt,
-        end_time: to.recordedAt,
-        commute_type: trip.direction,
-        trip_date: localDate.getTime(),
-        match_method: contextMatch ? "Context matched segment" : "GPS direct segment",
-        created_at: trip.endedAt
-      }
-    }));
+  // Checkpoint 3: substitute only confirmed context matches into the already
+  // prepared fallback features. Failure here leaves direct features intact.
+  trip.segmentBuildStage = "applying confirmed context matches";
+  try {
+    for (const [index, contextMatch] of matched) {
+      features[index].geometry = contextMatch.geometry;
+      features[index].attributes.distance_mi = contextMatch.distanceMi;
+      features[index].attributes.match_method = "Context matched segment";
+    }
+  } catch (error) {
+    if (!routingDiagnostic) routingDiagnostic = `Context-match application failed: ${conciseError(error)}`;
   }
 
   trip.roadMatchSummary = { snapped: matched.size, direct: segmentCount - matched.size, diagnostic: routingDiagnostic };
   trip.segmentFeatures = features;
-  setStatus(`Context road-matching complete: ${matched.size} context-matched, ${segmentCount - matched.size} GPS-direct fallback intervals.`);
+  trip.segmentBuildStage = "segment preparation complete";
+  setStatus(`Segment preparation complete: ${matched.size} context-matched, ${segmentCount - matched.size} GPS-direct fallback intervals.`);
   return features;
 }
 
@@ -375,6 +395,8 @@ async function startCommute() {
     samplesSaved: false,
     segmentsSaved: false,
     segmentFeatures: null,
+    segmentBuildStage: "",
+    directSegmentsOnly: $("direct-segments-only").checked,
     endedAt: null
   };
 
@@ -387,6 +409,7 @@ async function startCommute() {
   startButton.disabled = true;
   endButton.disabled = false;
   $("estimate").disabled = true;
+  $("direct-segments-only").disabled = true;
   $("direction-label").textContent = direction === "Morning" ? "Morning: Home → Work" : "Evening: Work → Home";
   await requestWakeLock();
   setStatus(`Tracking active as ${direction}. Keep this PWA open during the drive.`);
@@ -491,7 +514,10 @@ async function endCommute() {
   } catch (error) {
     // Do not reset `trip`: completed GPS data and completed stages stay in memory
     // and End Commute resumes at the stage identified below.
-    setStatus(`Save failed during ${saveStage}: ${conciseError(error)}. Keep this page open and tap End Commute again to retry.`);
+    const detailedStage = saveStage === "road matching" && trip?.segmentBuildStage
+      ? `${saveStage} — ${trip.segmentBuildStage}`
+      : saveStage;
+    setStatus(`Save failed during ${detailedStage}: ${conciseError(error)}. Keep this page open and tap End Commute again to retry.`);
     endButton.disabled = false;
   }
 }
@@ -503,6 +529,7 @@ function reset() {
   startButton.disabled = !signedIn;
   endButton.disabled = true;
   $("estimate").disabled = false;
+  $("direct-segments-only").disabled = false;
   $("direction-label").textContent = "Calculated when you start";
   $("elapsed").textContent = "0 min";
   $("distance").textContent = "0.0 mi";
