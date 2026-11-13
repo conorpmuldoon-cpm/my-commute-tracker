@@ -254,7 +254,10 @@ async function buildRoadSegments(localDate) {
     routingDiagnostic = `Routing service unavailable: ${conciseError(error)}`;
   }
 
-  for (let windowIndex = 0; routeUrl && windowIndex < windowCount; windowIndex++) {
+  // Road matching is an optional enhancement. No unexpected SDK or browser
+  // error from this phase may prevent saving per-interval GPS-direct segments.
+  try {
+    for (let windowIndex = 0; routeUrl && windowIndex < windowCount; windowIndex++) {
     const coreStart = windowIndex * coreIntervalsPerWindow;
     const coreEnd = Math.min(segmentCount, coreStart + coreIntervalsPerWindow);
     const contextStart = Math.max(0, coreStart - guardSamples);
@@ -291,6 +294,11 @@ async function buildRoadSegments(localDate) {
     } catch (error) {
       if (!routingDiagnostic) routingDiagnostic = `Context window ${windowIndex + 1} failed: ${conciseError(error)}`;
     }
+    }
+  } catch (error) {
+    // Preserve any intervals already matched; remaining intervals are saved as
+    // GPS-direct fallbacks below instead of failing the completed commute.
+    if (!routingDiagnostic) routingDiagnostic = `Road matching was skipped: ${conciseError(error)}`;
   }
 
   const features = [];
@@ -519,4 +527,6 @@ restoreSignedInSession();
 $("sign-in").addEventListener("click", signIn);
 startButton.addEventListener("click", startCommute);
 endButton.addEventListener("click", endCommute);
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
+"click", endCommute);
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});

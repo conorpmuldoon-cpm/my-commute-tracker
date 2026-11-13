@@ -19,9 +19,9 @@ The production recorder keeps **one derived polyline per original GPS interval**
 
 At trip end, the active app processes short ordered, overlapping GPS context windows (10 core intervals with two guard samples on each side). It extracts one road-correlated portion for each core interval only when endpoint proximity, route/GPS heading, projection order/continuity, and detour/backtracking checks are plausible. Any uncertain interval is deliberately saved as an individual gray dotted **GPS direct** fallback; accepted intervals are solid, speed-colored **Context matched** lines in the dashboard. Matching and saving require the PWA to remain open with network access until the final status reports the context-matched and fallback counts.
 
-### v16 route-serializer workaround
+### v17 nonblocking road matching
 
-The observed error screen confirms that v15 reached the road-matching stage, but its `RouteParameters.outSpatialReference` setting still entered an ArcGIS Maps SDK for JavaScript 4.30 string-only serializer branch. v16 deliberately omits that optional parameter. Stops continue to use real WGS84 `SpatialReference` instances, and the route service returns geometry in the stop geometry's WGS84 reference for the context matcher. The service-worker cache name is also versioned to ensure the revised module is installed.
+v16 confirmed that the optional output-spatial-reference parameter was not the only possible source of the mobile road-matching failure. In v17, road matching is explicitly treated as an optional enhancement: an unexpected Maps SDK, browser, or routing failure cannot prevent persistence of the completed commute. Any already accepted context-matched intervals are retained; all remaining intervals are saved as individual GPS-direct fallback segments. The final status reports the routing diagnostic while still completing the save.
 
 End-of-trip persistence is staged. If a failure occurs, the status now names **route save**, **samples save**, **road matching**, or **derived-segment save**. The completed trip remains in memory and **End commute** can be pressed again to resume only unfinished stages. Do not refresh or close the PWA before a retry succeeds.
 
