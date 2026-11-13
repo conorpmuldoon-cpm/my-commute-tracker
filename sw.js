@@ -1,4 +1,4 @@
-const CACHE = "my-commute-tracker-v17-nonblocking-road-matching";
+const CACHE = "my-commute-tracker-v18-sign-in-repair";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./app-config.js", "./oauth-callback.html", "./manifest.webmanifest", "./dashboard.html", "./dashboard.css", "./dashboard.js"];
 
 self.addEventListener("install", (event) => {

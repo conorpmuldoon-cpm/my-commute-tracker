@@ -528,5 +528,3 @@ $("sign-in").addEventListener("click", signIn);
 startButton.addEventListener("click", startCommute);
 endButton.addEventListener("click", endCommute);
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
-"click", endCommute);
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
