@@ -14,6 +14,7 @@ import OAuthInfo from "https://js.arcgis.com/4.30/@arcgis/core/identity/OAuthInf
 import esriId from "https://js.arcgis.com/4.30/@arcgis/core/identity/IdentityManager.js";
 import { appConfig } from "./app-config.js";
 
+const BUILD_VERSION = "v19";
 const $ = (id) => document.getElementById(id);
 const startButton = $("start"), endButton = $("end"), status = $("status");
 let watchId = null, timerId = null, trip = null, signedIn = false, wakeLock = null;
@@ -337,7 +338,7 @@ async function buildRoadSegments(localDate) {
 
 function markSignedIn() {
   signedIn = true;
-  $("account-status").textContent = "Signed in to ArcGIS";
+  $("account-status").textContent = `Signed in to ArcGIS · ${BUILD_VERSION}`;
   startButton.disabled = false;
   setStatus("Ready to start a commute.");
 }
